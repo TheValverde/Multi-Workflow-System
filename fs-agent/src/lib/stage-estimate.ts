@@ -1,11 +1,17 @@
-import type { EstimateDetail } from "./estimates";
+import type { EstimateDetail, QuoteTotalsLine } from "./estimates";
+import { calculateQuoteTotals } from "./estimates";
 
 export type StageEstimateResponse = {
   estimateId: string;
   projectName: string;
   currentStage: string;
   totalHours: number;
+  totalCost: number;
+  currency: string;
   roleSummary: Record<string, number>;
+  paymentTerms: string | null;
+  deliveryTimeline: string | null;
+  delivered: boolean;
   approvedVersion?: {
     version: number;
     actor: string | null;
@@ -22,6 +28,7 @@ export type StageEstimateResponse = {
     sort_order: number;
     updated_at: string;
   }[];
+  lines: QuoteTotalsLine[];
   lastUpdated: string | null;
 };
 
@@ -45,15 +52,25 @@ export function buildStageEstimatePayload(
     : null;
   const lastUpdated =
     rows[rows.length - 1]?.updated_at ?? detail.estimate.updated_at ?? null;
+  const quoteTotals = calculateQuoteTotals(
+    detail.effortEstimate,
+    detail.quote,
+  );
 
   return {
     estimateId: detail.estimate.id,
     projectName: detail.estimate.name,
     currentStage: detail.estimate.stage,
     totalHours,
+    totalCost: quoteTotals.totalCost,
+    currency: quoteTotals.currency,
     roleSummary,
+    paymentTerms: quoteTotals.paymentTerms,
+    deliveryTimeline: quoteTotals.deliveryTimeline,
+    delivered: detail.quote.record.delivered,
     approvedVersion,
     rows,
+    lines: quoteTotals.lines,
     lastUpdated,
   };
 }

@@ -9,8 +9,13 @@ import type {
   TimelineRecord,
   WbsRowRecord,
   WbsVersionRecord,
+  QuoteDetail,
+  QuoteTotals,
 } from "@/lib/estimates";
-import { hasApprovedEffortEstimate } from "@/lib/estimates";
+import {
+  calculateQuoteTotals,
+  hasApprovedEffortEstimate,
+} from "@/lib/estimates";
 import { STAGES, getStageIndex, isFinalStage } from "@/lib/stages";
 import RichTextEditor from "@/components/project-detail/RichTextEditor";
 
@@ -35,6 +40,13 @@ type EditableWbsRow = {
   assumptions: string;
 };
 
+type EditableQuoteRate = {
+  role: string;
+  rate: number;
+};
+
+const DEFAULT_ROLE_RATE = 150;
+
 export default function ProjectDetailView({ estimateId }: Props) {
   const [detail, setDetail] = useState<EstimateDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +63,15 @@ export default function ProjectDetailView({ estimateId }: Props) {
   const [requirementsSaving, setRequirementsSaving] = useState(false);
   const [businessCaseGenerating, setBusinessCaseGenerating] = useState(false);
   const [requirementsGenerating, setRequirementsGenerating] = useState(false);
+  const [quoteRates, setQuoteRates] = useState<EditableQuoteRate[]>([]);
+  const [quoteOverrides, setQuoteOverrides] = useState<Record<string, number>>({});
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [deliveryTimeline, setDeliveryTimeline] = useState("");
+  const [quoteDelivered, setQuoteDelivered] = useState(false);
+  const [quoteDeliveredAt, setQuoteDeliveredAt] = useState<string | null>(null);
+  const [quoteSaving, setQuoteSaving] = useState(false);
+  const [quoteExporting, setQuoteExporting] = useState(false);
+  const [quoteCopying, setQuoteCopying] = useState(false);
   const [wbsRows, setWbsRows] = useState<EditableWbsRow[]>([]);
   const [wbsSaving, setWbsSaving] = useState(false);
   const [wbsGenerating, setWbsGenerating] = useState(false);
@@ -173,6 +194,43 @@ export default function ProjectDetailView({ estimateId }: Props) {
     setWbsRows(serverWbsRows);
   }, [serverWbsRows]);
 
+  useEffect(() => {
+    if (!detail) return;
+    const existingRates = detail.quote.rates.map((rate) => ({
+      role: rate.role,
+      rate: rate.rate,
+    }));
+    const roleSet = Array.from(
+      new Set(
+        detail.effortEstimate.rows
+          .map((row) => row.role)
+          .filter((role): role is string => Boolean(role)),
+      ),
+    );
+    const mergedRates = [...existingRates];
+    roleSet.forEach((role) => {
+      if (!mergedRates.some((item) => item.role === role)) {
+        mergedRates.push({ role, rate: DEFAULT_ROLE_RATE });
+      }
+    });
+    setQuoteRates(mergedRates);
+    const overridesMap: Record<string, number> = {};
+    detail.quote.overrides.forEach((override) => {
+      overridesMap[override.wbs_row_id] = override.rate;
+    });
+    setQuoteOverrides(overridesMap);
+    setPaymentTerms(detail.quote.record.payment_terms ?? "");
+    setDeliveryTimeline(detail.quote.record.delivery_timeline ?? "");
+    setQuoteDelivered(detail.quote.record.delivered);
+    setQuoteDeliveredAt(detail.quote.record.delivered_at ?? null);
+  }, [
+    detail,
+    detail?.quote.record.delivered,
+    detail?.quote.record.delivery_timeline,
+    detail?.quote.record.payment_terms,
+    detail?.effortEstimate.rows,
+  ]);
+
   const wbsDirty = useMemo(
     () => !areWbsRowsEqual(wbsRows, serverWbsRows),
     [wbsRows, serverWbsRows],
@@ -200,6 +258,51 @@ export default function ProjectDetailView({ estimateId }: Props) {
   useEffect(() => {
     wbsRowsRef.current = wbsRows;
   }, [wbsRows]);
+
+  const quoteDetailDraft = useMemo<QuoteDetail | null>(() => {
+    if (!detail) return null;
+    return {
+      record: {
+        ...detail.quote.record,
+        payment_terms: paymentTerms || null,
+        delivery_timeline: deliveryTimeline || null,
+        delivered: quoteDelivered,
+      },
+      rates: quoteRates.map((rate) => ({
+        id:
+          detail.quote.rates.find((existing) => existing.role === rate.role)?.id ??
+          `rate-${rate.role}`,
+        estimate_id: detail.estimate.id,
+        role: rate.role,
+        rate: Number(rate.rate) || 0,
+        updated_at:
+          detail.quote.rates.find((existing) => existing.role === rate.role)
+            ?.updated_at ?? detail.quote.record.updated_at,
+      })),
+      overrides: Object.entries(quoteOverrides).map(([rowId, value]) => ({
+        id: rowId,
+        estimate_id: detail.estimate.id,
+        wbs_row_id: rowId,
+        rate: Number(value) || 0,
+        updated_at:
+          detail.quote.overrides.find(
+            (existing) => existing.wbs_row_id === rowId,
+          )?.updated_at ?? detail.quote.record.updated_at,
+      })),
+    };
+  }, [
+    detail,
+    paymentTerms,
+    deliveryTimeline,
+    quoteDelivered,
+    quoteRates,
+    quoteOverrides,
+  ]);
+
+  const quoteTotals = useMemo<QuoteTotals | null>(() => {
+    if (!detail || !quoteDetailDraft) return null;
+    return calculateQuoteTotals(detail.effortEstimate, quoteDetailDraft);
+  }, [detail, quoteDetailDraft]);
 
   const stageReady = useMemo(() => {
     if (!detail) return false;
@@ -448,6 +551,191 @@ export default function ProjectDetailView({ estimateId }: Props) {
     handleWbsApprove().catch(() => undefined);
   }, [handleWbsApprove]);
 
+  const handleQuoteRateChange = useCallback(
+    (index: number, field: keyof EditableQuoteRate, value: string | number) => {
+      setQuoteRates((prev) =>
+        prev.map((rate, idx) =>
+          idx === index
+            ? {
+                ...rate,
+                [field]:
+                  field === "rate"
+                    ? Number(value) || 0
+                    : typeof value === "string"
+                    ? value
+                    : rate.role,
+              }
+            : rate,
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleAddQuoteRole = useCallback(() => {
+    setQuoteRates((prev) => [
+      ...prev,
+      { role: "", rate: DEFAULT_ROLE_RATE },
+    ]);
+  }, []);
+
+  const handleRemoveQuoteRole = useCallback((index: number) => {
+    setQuoteRates((prev) => prev.filter((_, idx) => idx !== index));
+  }, []);
+
+  const handleOverrideChange = useCallback(
+    (rowId: string, value: string | number) => {
+      setQuoteOverrides((prev) => {
+        const next = { ...prev };
+        const numeric = Number(value);
+        if (!value || Number.isNaN(numeric) || numeric <= 0) {
+          delete next[rowId];
+        } else {
+          next[rowId] = numeric;
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const buildQuotePayload = useCallback(() => {
+    return {
+      paymentTerms: paymentTerms.trim() || null,
+      deliveryTimeline: deliveryTimeline.trim() || null,
+      rates: quoteRates
+        .map((rate) => ({
+          role: rate.role.trim(),
+          rate: Number(rate.rate) || 0,
+        }))
+        .filter((rate) => rate.role.length > 0 && rate.rate > 0),
+      overrides: Object.entries(quoteOverrides).map(
+        ([wbsRowId, rate]) => ({
+          wbsRowId,
+          rate,
+        }),
+      ),
+    };
+  }, [paymentTerms, deliveryTimeline, quoteRates, quoteOverrides]);
+
+  const handleQuoteSave = useCallback(async () => {
+    setQuoteSaving(true);
+    setActionError(null);
+    try {
+      const payload = buildQuotePayload();
+      const res = await fetch(`/api/estimates/${estimateId}/quote`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Unable to save quote");
+      }
+      applyDetail(data as EstimateDetail);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Quote save failed");
+    } finally {
+      setQuoteSaving(false);
+    }
+  }, [applyDetail, buildQuotePayload, estimateId]);
+
+  const handleMarkDelivered = useCallback(async () => {
+    setQuoteSaving(true);
+    setActionError(null);
+    try {
+      const payload = buildQuotePayload();
+      const res = await fetch(`/api/estimates/${estimateId}/quote`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...payload,
+          delivered: true,
+          notes: notes.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Unable to mark delivered");
+      }
+      applyDetail(data as EstimateDetail);
+      setNotes("");
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Unable to mark delivered",
+      );
+    } finally {
+      setQuoteSaving(false);
+    }
+  }, [applyDetail, buildQuotePayload, estimateId, notes]);
+
+  const handleReopenQuote = useCallback(async () => {
+    setQuoteSaving(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/estimates/${estimateId}/quote`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminOverride: true,
+          delivered: false,
+          notes: notes.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Unable to reopen quote");
+      }
+      applyDetail(data as EstimateDetail);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Unable to reopen");
+    } finally {
+      setQuoteSaving(false);
+    }
+  }, [applyDetail, estimateId, notes]);
+
+  const handleExportQuote = useCallback(async () => {
+    setQuoteExporting(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/estimates/${estimateId}/export`);
+      if (!res.ok) {
+        const payload = await res.json();
+        throw new Error(payload.error || "Unable to export CSV");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `estimate-${estimateId}-quote.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setQuoteExporting(false);
+    }
+  }, [estimateId]);
+
+  const handleCopyQuote = useCallback(async () => {
+    setQuoteCopying(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/estimates/${estimateId}/export`);
+      const text = await res.text();
+      if (!res.ok) {
+        throw new Error("Unable to copy CSV");
+      }
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Copy failed");
+    } finally {
+      setQuoteCopying(false);
+    }
+  }, [estimateId]);
+
   const handleBusinessCaseSave = useCallback(
     async (options?: { approve?: boolean; notes?: string }) => {
       setBusinessCaseSaving(true);
@@ -588,6 +876,23 @@ export default function ProjectDetailView({ estimateId }: Props) {
       );
       await wbsSaveRef.current?.(nextRows);
       return `Updated ${taskCode} to ${hours} hours`;
+    },
+  });
+
+  useCopilotAction({
+    name: "getProjectTotal",
+    description: "Retrieve the current total quote value for this project.",
+    handler: async () => {
+      const res = await fetch(`/api/estimates/${estimateId}/stage/estimate`, {
+        cache: "no-store",
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload.error || "Unable to fetch total");
+      }
+      const currency = payload.currency ?? "USD";
+      const totalCost = Number(payload.totalCost ?? 0).toFixed(2);
+      return `Total quote for ${payload.projectName ?? "this project"} is ${currency} ${totalCost}`;
     },
   });
 
@@ -784,6 +1089,40 @@ export default function ProjectDetailView({ estimateId }: Props) {
             onAddRow={handleAddWbsRow}
             onRowChange={handleWbsRowChange}
             onRemoveRow={handleRemoveWbsRow}
+          />
+        </section>
+
+        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+          <QuotePanel
+            rows={detail.effortEstimate.rows}
+            roleRates={quoteRates}
+            overrides={quoteOverrides}
+            paymentTerms={paymentTerms}
+            deliveryTimeline={deliveryTimeline}
+            delivered={quoteDelivered}
+            deliveredAt={quoteDeliveredAt}
+            totals={quoteTotals}
+            saving={quoteSaving}
+            exporting={quoteExporting}
+            copying={quoteCopying}
+            disabled={quoteDelivered}
+            canDeliver={
+              Boolean(quoteTotals && quoteTotals.lines.length > 0) &&
+              hasApprovedWbs &&
+              !quoteDelivered
+            }
+            hasQuoteData={Boolean(quoteTotals && quoteTotals.lines.length > 0)}
+            onRateChange={handleQuoteRateChange}
+            onAddRole={handleAddQuoteRole}
+            onRemoveRole={handleRemoveQuoteRole}
+            onOverrideChange={handleOverrideChange}
+            onPaymentTermsChange={setPaymentTerms}
+            onDeliveryTimelineChange={setDeliveryTimeline}
+            onSave={handleQuoteSave}
+            onDeliver={handleMarkDelivered}
+            onReopen={handleReopenQuote}
+            onExport={handleExportQuote}
+            onCopy={handleCopyQuote}
           />
         </section>
 
@@ -1297,6 +1636,328 @@ function areWbsRowsEqual(
       assumptions: row.assumptions,
     }));
   return JSON.stringify(normalize(current)) === JSON.stringify(normalize(baseline));
+}
+
+type QuotePanelProps = {
+  rows: WbsRowRecord[];
+  roleRates: EditableQuoteRate[];
+  overrides: Record<string, number>;
+  paymentTerms: string;
+  deliveryTimeline: string;
+  delivered: boolean;
+  deliveredAt: string | null;
+  totals: QuoteTotals | null;
+  saving: boolean;
+  exporting: boolean;
+  copying: boolean;
+  disabled: boolean;
+  canDeliver: boolean;
+  hasQuoteData: boolean;
+  onRateChange: (
+    index: number,
+    field: keyof EditableQuoteRate,
+    value: string | number,
+  ) => void;
+  onAddRole: () => void;
+  onRemoveRole: (index: number) => void;
+  onOverrideChange: (rowId: string, value: string | number) => void;
+  onPaymentTermsChange: (value: string) => void;
+  onDeliveryTimelineChange: (value: string) => void;
+  onSave: () => void;
+  onDeliver: () => void;
+  onReopen: () => void;
+  onExport: () => void;
+  onCopy: () => void;
+};
+
+function QuotePanel({
+  rows,
+  roleRates,
+  overrides,
+  paymentTerms,
+  deliveryTimeline,
+  delivered,
+  deliveredAt,
+  totals,
+  saving,
+  exporting,
+  copying,
+  disabled,
+  canDeliver,
+  hasQuoteData,
+  onRateChange,
+  onAddRole,
+  onRemoveRole,
+  onOverrideChange,
+  onPaymentTermsChange,
+  onDeliveryTimelineChange,
+  onSave,
+  onDeliver,
+  onReopen,
+  onExport,
+  onCopy,
+}: QuotePanelProps) {
+  const roleRateMap = new Map(
+    roleRates.map((rate) => [rate.role.toLowerCase(), Number(rate.rate) || 0]),
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Quote Stage
+          </p>
+          <h2 className="text-2xl font-semibold text-slate-900">
+            Pricing & Delivery
+          </h2>
+          <p className="text-sm text-slate-500">
+            Configure role rates, override per-task costs, set payment terms, and
+            export the final quote artifact.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-inner">
+          <p className="text-xs uppercase tracking-widest text-white/70">
+            Total
+          </p>
+          <p className="text-2xl font-semibold">
+            {totals
+              ? `${totals.currency} ${totals.totalCost.toFixed(2)}`
+              : "—"}
+          </p>
+          {delivered && deliveredAt && (
+            <p className="text-xs text-white/70">
+              Delivered {new Date(deliveredAt).toLocaleString()}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <span
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            delivered
+              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+              : "bg-amber-50 text-amber-700 ring-1 ring-amber-100"
+          }`}
+        >
+          {delivered ? "Delivered" : "Draft"}
+        </span>
+        {!delivered && (
+          <button
+            onClick={onSave}
+            disabled={saving}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "Saving…" : "Save Quote"}
+          </button>
+        )}
+        {!delivered && (
+          <button
+            onClick={onDeliver}
+            disabled={!canDeliver || saving}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+          >
+            {saving ? "Marking…" : "Mark Delivered"}
+          </button>
+        )}
+        {delivered && (
+          <button
+            onClick={onReopen}
+            disabled={saving}
+            className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "Reopening…" : "Reopen Quote (Admin Override)"}
+          </button>
+        )}
+        <button
+          onClick={onExport}
+          disabled={!hasQuoteData || exporting}
+          className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {exporting ? "Exporting…" : "Export CSV"}
+        </button>
+        <button
+          onClick={onCopy}
+          disabled={!hasQuoteData || copying}
+          className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {copying ? "Copying…" : "Copy CSV"}
+        </button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Payment Terms
+          </label>
+          <textarea
+            value={paymentTerms}
+            onChange={(event) => onPaymentTermsChange(event.target.value)}
+            disabled={disabled}
+            placeholder="e.g., Net 30 with 10% upfront."
+            className="w-full rounded-2xl border border-slate-200 p-3 text-sm"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Delivery Timeline
+          </label>
+          <textarea
+            value={deliveryTimeline}
+            onChange={(event) => onDeliveryTimelineChange(event.target.value)}
+            disabled={disabled}
+            placeholder="e.g., Delivery within 8 weeks of kickoff."
+            className="w-full rounded-2xl border border-slate-200 p-3 text-sm"
+          />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Role Rates
+          </h3>
+          {!disabled && (
+            <button
+              onClick={onAddRole}
+              className="rounded-full border border-dashed border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              + Add Role
+            </button>
+          )}
+        </div>
+        <div className="divide-y divide-slate-200">
+          {roleRates.length === 0 && (
+            <p className="px-4 py-4 text-sm text-slate-500">
+              No roles yet. Add a rate to begin.
+            </p>
+          )}
+          {roleRates.map((rate, index) => (
+            <div
+              key={`${rate.role}-${index}`}
+              className="grid gap-3 px-4 py-3 md:grid-cols-[2fr,1fr,auto]"
+            >
+              <input
+                value={rate.role}
+                disabled={disabled}
+                onChange={(event) =>
+                  onRateChange(index, "role", event.target.value)
+                }
+                placeholder="Role"
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+              <input
+                type="number"
+                min={0}
+                step={5}
+                value={rate.rate}
+                disabled={disabled}
+                onChange={(event) =>
+                  onRateChange(index, "rate", Number(event.target.value))
+                }
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+              {!disabled && (
+                <button
+                  onClick={() => onRemoveRole(index)}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-50"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            WBS Overrides
+          </h3>
+          <p className="text-xs text-slate-500">
+            Optional per-task rates supersede the role rate for final costing.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50">
+              <tr className="text-xs uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-3 text-left">Task</th>
+                <th className="px-4 py-3 text-left">Role</th>
+                <th className="px-4 py-3 text-left">Hours</th>
+                <th className="px-4 py-3 text-left">Override Rate</th>
+                <th className="px-4 py-3 text-left">Effective Rate</th>
+                <th className="px-4 py-3 text-left">Cost</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((row, index) => {
+                const hasPersistedRow = Boolean(row.id);
+                const overrideKey = hasPersistedRow
+                  ? (row.id as string)
+                  : `temp-${index}`;
+                const overrideRate = overrides[overrideKey] ?? null;
+                const resolvedRate =
+                  overrideRate ??
+                  roleRateMap.get((row.role ?? "").toLowerCase()) ??
+                  DEFAULT_ROLE_RATE;
+                const cost = (row.hours ?? 0) * resolvedRate;
+                return (
+                  <tr key={overrideKey}>
+                    <td className="px-4 py-3 align-top">
+                      <p className="font-medium text-slate-900">
+                        {row.task_code ?? "—"}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {row.description}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3 align-top">{row.role}</td>
+                    <td className="px-4 py-3 align-top">
+                      {(row.hours ?? 0).toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      <input
+                        type="number"
+                        min={0}
+                        step={5}
+                        value={overrideRate ?? ""}
+                        disabled={disabled || !hasPersistedRow}
+                        onChange={(event) =>
+                          hasPersistedRow &&
+                          onOverrideChange(row.id as string, event.target.value)
+                        }
+                        placeholder="Use role rate"
+                        className="w-32 rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                      />
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      {resolvedRate.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      {cost.toFixed(2)}
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-4 py-6 text-center text-sm text-slate-500"
+                  >
+                    Approve a WBS to configure quote overrides.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function extractPlainText(value: string) {

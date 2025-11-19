@@ -480,3 +480,9 @@ This story successfully established the foundation for the entire project:
 - **2025-11-19 16:45 UTC** — Added Effort Estimate panel (inline table editing, role/hour summaries, Copilot actions) and updated stage gating + timeline logging.
 - **2025-11-19 17:00 UTC** — Added LangGraph `generate_wbs` tool, Vitest coverage for stage payload + generator heuristics, documented everything in DEV_NOTES.
 
+## STORY-006 — Quote Stage Export & Delivery Flag
+
+- **2025-11-19 18:15 UTC** — Added Supabase quote tables (rates + overrides), quote APIs, and CSV export endpoint with delivery logging + admin override safeguard.
+- **2025-11-19 18:40 UTC** — Implemented Quote UI (rate table, overrides, payment terms, delivery toggle, export/copy) plus Copilot `getProjectTotal` action.
+- **2025-11-19 19:00 UTC** — Added LangGraph `get_project_total` tool, extended stage-estimate payload, and documented/testing updates (Vitest + DEV_NOTES).
+

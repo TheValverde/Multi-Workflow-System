@@ -14,6 +14,7 @@ export type EstimateDetail = {
   businessCase: BusinessCaseRecord;
   requirements: RequirementsRecord;
   effortEstimate: EffortEstimateRecord;
+  quote: QuoteDetail;
 };
 
 export type ArtifactRecord = {
@@ -82,6 +83,70 @@ export type EffortEstimateRecord = {
   approvedVersion: WbsVersionRecord | null;
 };
 
+export type QuoteRecord = {
+  id: string;
+  estimate_id: string;
+  currency: string;
+  payment_terms: string | null;
+  delivery_timeline: string | null;
+  delivered: boolean;
+  delivered_at: string | null;
+  delivered_by: string | null;
+  updated_at: string;
+};
+
+export type QuoteRateRecord = {
+  id: string;
+  estimate_id: string;
+  role: string;
+  rate: number;
+  updated_at: string;
+};
+
+export type QuoteOverrideRecord = {
+  id: string;
+  estimate_id: string;
+  wbs_row_id: string;
+  rate: number;
+  updated_at: string;
+};
+
+export type QuoteDetail = {
+  record: QuoteRecord;
+  rates: QuoteRateRecord[];
+  overrides: QuoteOverrideRecord[];
+};
+
+export type QuoteRateInput = {
+  role: string;
+  rate: number;
+};
+
+export type QuoteOverrideInput = {
+  wbsRowId: string;
+  rate: number;
+};
+
+export type QuoteTotalsLine = {
+  rowId: string;
+  taskCode: string | null;
+  description: string;
+  role: string;
+  hours: number;
+  rate: number;
+  cost: number;
+};
+
+export type QuoteTotals = {
+  currency: string;
+  totalHours: number;
+  totalCost: number;
+  roleSummary: Record<string, number>;
+  paymentTerms: string | null;
+  deliveryTimeline: string | null;
+  lines: QuoteTotalsLine[];
+};
+
 export type WbsRowInput = {
   id?: string | null;
   taskCode?: string | null;
@@ -112,6 +177,9 @@ export async function fetchEstimateDetail(
     requirements,
     wbsRows,
     wbsVersions,
+    quoteRecord,
+    quoteRates,
+    quoteOverrides,
   ] = await Promise.all([
     supabase
       .from("estimate_artifacts")
@@ -127,6 +195,9 @@ export async function fetchEstimateDetail(
     ensureRequirementsRow(supabase, estimateId),
     getWbsRows(supabase, estimateId),
     getWbsVersions(supabase, estimateId),
+    ensureQuoteRecord(supabase, estimateId),
+    getQuoteRates(supabase, estimateId),
+    getQuoteOverrides(supabase, estimateId),
   ]);
 
   const mappedArtifacts: ArtifactRecord[] =
@@ -142,6 +213,11 @@ export async function fetchEstimateDetail(
     businessCase,
     requirements,
     effortEstimate: buildEffortEstimate(wbsRows, wbsVersions),
+    quote: {
+      record: quoteRecord,
+      rates: quoteRates,
+      overrides: quoteOverrides,
+    },
   };
 }
 
@@ -385,5 +461,282 @@ export function hasApprovedEffortEstimate(
 ): boolean {
   if (!effortEstimate) return false;
   return Boolean(effortEstimate.approvedVersion);
+}
+
+async function ensureQuoteRecord(
+  supabase: SupabaseClient,
+  estimateId: string,
+): Promise<QuoteRecord> {
+  const { data, error } = await supabase
+    .from("estimate_quote")
+    .select(
+      "id,estimate_id,currency,payment_terms,delivery_timeline,delivered,delivered_at,delivered_by,updated_at",
+    )
+    .eq("estimate_id", estimateId)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  if (data) {
+    return data as QuoteRecord;
+  }
+  const { data: inserted, error: insertError } = await supabase
+    .from("estimate_quote")
+    .insert({ estimate_id: estimateId })
+    .select(
+      "id,estimate_id,currency,payment_terms,delivery_timeline,delivered,delivered_at,delivered_by,updated_at",
+    )
+    .single();
+  if (insertError) {
+    throw insertError;
+  }
+  return inserted as QuoteRecord;
+}
+
+async function getQuoteRates(
+  supabase: SupabaseClient,
+  estimateId: string,
+): Promise<QuoteRateRecord[]> {
+  const { data, error } = await supabase
+    .from("estimate_quote_rates")
+    .select("id,estimate_id,role,rate,updated_at")
+    .eq("estimate_id", estimateId)
+    .order("role", { ascending: true });
+  if (error) {
+    throw error;
+  }
+  return (
+    data?.map((rate) => ({
+      ...rate,
+      rate: typeof rate.rate === "number" ? rate.rate : Number(rate.rate) || 0,
+    })) ?? []
+  );
+}
+
+async function getQuoteOverrides(
+  supabase: SupabaseClient,
+  estimateId: string,
+): Promise<QuoteOverrideRecord[]> {
+  const { data, error } = await supabase
+    .from("estimate_quote_overrides")
+    .select("id,estimate_id,wbs_row_id,rate,updated_at")
+    .eq("estimate_id", estimateId);
+  if (error) {
+    throw error;
+  }
+  return (
+    data?.map((row) => ({
+      ...row,
+      rate: typeof row.rate === "number" ? row.rate : Number(row.rate) || 0,
+    })) ?? []
+  );
+}
+
+export async function updateQuoteRecord(
+  supabase: SupabaseClient,
+  estimateId: string,
+  payload: Partial<
+    Pick<
+      QuoteRecord,
+      "currency" | "payment_terms" | "delivery_timeline" | "delivered"
+    >
+  >,
+) {
+  const updatePayload = {
+    ...payload,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("estimate_quote")
+    .update(updatePayload)
+    .eq("estimate_id", estimateId);
+  if (error) {
+    throw error;
+  }
+}
+
+export async function replaceQuoteRates(
+  supabase: SupabaseClient,
+  estimateId: string,
+  rates: QuoteRateInput[],
+) {
+  const filtered = rates
+    .map((rate) => ({
+      role: rate.role.trim(),
+      rate: Number(rate.rate) || 0,
+    }))
+    .filter((rate) => rate.role.length > 0 && rate.rate > 0);
+  const { error: deleteError } = await supabase
+    .from("estimate_quote_rates")
+    .delete()
+    .eq("estimate_id", estimateId);
+  if (deleteError) throw deleteError;
+  if (!filtered.length) return;
+  const { error } = await supabase.from("estimate_quote_rates").insert(
+    filtered.map((rate) => ({
+      estimate_id: estimateId,
+      role: rate.role,
+      rate: rate.rate,
+      updated_at: new Date().toISOString(),
+    })),
+    { returning: "minimal" },
+  );
+  if (error) {
+    throw error;
+  }
+}
+
+export async function replaceQuoteOverrides(
+  supabase: SupabaseClient,
+  estimateId: string,
+  overrides: QuoteOverrideInput[],
+) {
+  const filtered = overrides
+    .map((override) => ({
+      wbs_row_id: override.wbsRowId,
+      rate: Number(override.rate) || 0,
+    }))
+    .filter((override) => override.wbs_row_id && override.rate > 0);
+  const { error: deleteError } = await supabase
+    .from("estimate_quote_overrides")
+    .delete()
+    .eq("estimate_id", estimateId);
+  if (deleteError) throw deleteError;
+  if (!filtered.length) return;
+  const { error } = await supabase.from("estimate_quote_overrides").insert(
+    filtered.map((override) => ({
+      estimate_id: estimateId,
+      wbs_row_id: override.wbs_row_id,
+      rate: override.rate,
+      updated_at: new Date().toISOString(),
+    })),
+    { returning: "minimal" },
+  );
+  if (error) {
+    throw error;
+  }
+}
+
+export async function markQuoteDelivered(
+  supabase: SupabaseClient,
+  estimateId: string,
+  actor: string,
+  delivered: boolean,
+) {
+  const payload = delivered
+    ? {
+        delivered: true,
+        delivered_at: new Date().toISOString(),
+        delivered_by: actor,
+      }
+    : {
+        delivered: false,
+        delivered_at: null,
+        delivered_by: null,
+      };
+  const { error } = await supabase
+    .from("estimate_quote")
+    .update({
+      ...payload,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("estimate_id", estimateId);
+  if (error) {
+    throw error;
+  }
+}
+
+const DEFAULT_ROLE_RATE = 150;
+
+export function calculateQuoteTotals(
+  effortEstimate: EffortEstimateRecord,
+  quote: QuoteDetail,
+): QuoteTotals {
+  const roleRates = new Map(
+    quote.rates.map((rate) => [rate.role.toLowerCase(), Number(rate.rate)]),
+  );
+  const overrideRates = new Map(
+    quote.overrides.map((override) => [override.wbs_row_id, Number(override.rate)]),
+  );
+  const lines: QuoteTotalsLine[] = effortEstimate.rows.map((row) => {
+    const overrideRate = overrideRates.get(row.id);
+    const roleRate =
+      roleRates.get((row.role ?? "").toLowerCase()) ?? DEFAULT_ROLE_RATE;
+    const rate = overrideRate ?? roleRate;
+    const cost = roundCurrency(rate * (row.hours ?? 0));
+    return {
+      rowId: row.id,
+      taskCode: row.task_code,
+      description: row.description,
+      role: row.role,
+      hours: row.hours ?? 0,
+      rate,
+      cost,
+    };
+  });
+  const totalCost = roundCurrency(lines.reduce((sum, line) => sum + line.cost, 0));
+  const totalHours = lines.reduce((sum, line) => sum + (line.hours ?? 0), 0);
+  const roleSummary = lines.reduce((acc, line) => {
+    const key = line.role || "Unassigned";
+    acc[key] = roundCurrency((acc[key] ?? 0) + line.cost);
+    return acc;
+  }, {} as Record<string, number>);
+  return {
+    currency: quote.record.currency,
+    totalHours,
+    totalCost,
+    roleSummary,
+    paymentTerms: quote.record.payment_terms,
+    deliveryTimeline: quote.record.delivery_timeline,
+    lines,
+  };
+}
+
+export function buildQuoteCsv(
+  estimate: EstimateDetail,
+  totals: QuoteTotals,
+): string {
+  const header = [
+    "Task Code",
+    "Description",
+    "Role",
+    "Hours",
+    "Rate",
+    "Cost",
+    "Assumptions",
+  ];
+  const rows = totals.lines.map((line) => {
+    const sourceRow = estimate.effortEstimate.rows.find(
+      (row) => row.id === line.rowId,
+    );
+    return [
+      line.taskCode ?? "",
+      sanitizeCsv(line.description),
+      sanitizeCsv(line.role ?? ""),
+      line.hours.toFixed(2),
+      line.rate.toFixed(2),
+      line.cost.toFixed(2),
+      sanitizeCsv(sourceRow?.assumptions ?? ""),
+    ];
+  });
+  rows.push([]);
+  rows.push(["Total Hours", totals.totalHours.toFixed(2)]);
+  rows.push(["Total Cost", `${totals.currency} ${totals.totalCost.toFixed(2)}`]);
+  rows.push(["Payment Terms", sanitizeCsv(totals.paymentTerms ?? "")]);
+  rows.push(["Delivery Timeline", sanitizeCsv(totals.deliveryTimeline ?? "")]);
+  return [header, ...rows].map((line) => line.join(",")).join("\n");
+}
+
+function sanitizeCsv(value: string) {
+  if (!value) return "";
+  const replaceQuotes = value.replace(/"/g, '""');
+  if (replaceQuotes.includes(",") || replaceQuotes.includes("\n")) {
+    return `"${replaceQuotes}"`;
+  }
+  return replaceQuotes;
+}
+
+function roundCurrency(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 

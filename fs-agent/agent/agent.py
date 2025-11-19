@@ -36,6 +36,7 @@ class AgentState(MessagesState):
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+DEFAULT_ROLE_RATE = 150
 
 
 def fetch_artifacts(estimate_id: str):
@@ -92,6 +93,97 @@ def fetch_requirements_content(estimate_id: str) -> str:
         return data[0].get("content") or ""
     except Exception:
         return ""
+
+
+def fetch_wbs_rows(estimate_id: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return []
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimate_wbs_rows",
+            params={
+                "estimate_id": f"eq.{estimate_id}",
+                "select": "id,task_code,description,role,hours,assumptions,sort_order",
+                "order": "sort_order.asc",
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception:
+        return []
+
+
+def fetch_quote_record(estimate_id: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return None
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimate_quote",
+            params={
+                "estimate_id": f"eq.{estimate_id}",
+                "select": "currency,payment_terms,delivery_timeline,delivered",
+                "limit": 1,
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data[0] if data else None
+    except Exception:
+        return None
+
+
+def fetch_quote_rates(estimate_id: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return []
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimate_quote_rates",
+            params={
+                "estimate_id": f"eq.{estimate_id}",
+                "select": "role,rate",
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception:
+        return []
+
+
+def fetch_quote_overrides(estimate_id: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return []
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimate_quote_overrides",
+            params={
+                "estimate_id": f"eq.{estimate_id}",
+                "select": "wbs_row_id,rate",
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception:
+        return []
 
 
 def summarize_from_artifacts(artifacts, intro: str, outro: str):
@@ -270,10 +362,66 @@ def generate_wbs(estimate_id: str):
         "rows": rows,
     }
 
+
+@tool
+def get_project_total(estimate_id: str):
+    """
+    Calculate the current quote total, factoring in role rates and per-task overrides.
+    """
+    rows = fetch_wbs_rows(estimate_id)
+    if not rows:
+        return {
+            "message": "No WBS rows available. Approve a WBS first.",
+            "total_cost": 0,
+        }
+    quote = fetch_quote_record(estimate_id) or {}
+    rates = fetch_quote_rates(estimate_id)
+    overrides = fetch_quote_overrides(estimate_id)
+    rate_map = {
+        (rate.get("role") or "").lower(): float(rate.get("rate") or 0)
+        for rate in rates
+    }
+    override_map = {
+        override.get("wbs_row_id"): float(override.get("rate") or 0)
+        for override in overrides
+    }
+    currency = quote.get("currency", "USD")
+    lines = []
+    total_cost = 0.0
+    total_hours = 0.0
+    for row in rows:
+        hours = float(row.get("hours") or 0)
+        role = row.get("role") or ""
+        override_rate = override_map.get(row.get("id"))
+        base_rate = rate_map.get(role.lower(), DEFAULT_ROLE_RATE)
+        rate = override_rate if override_rate and override_rate > 0 else base_rate
+        cost = round(hours * rate, 2)
+        total_cost += cost
+        total_hours += hours
+        lines.append(
+            {
+                "task_code": row.get("task_code"),
+                "description": row.get("description"),
+                "role": role,
+                "hours": hours,
+                "rate": rate,
+                "cost": cost,
+            }
+        )
+    return {
+        "currency": currency,
+        "total_cost": round(total_cost, 2),
+        "total_hours": round(total_hours, 2),
+        "payment_terms": quote.get("payment_terms"),
+        "delivery_timeline": quote.get("delivery_timeline"),
+        "lines": lines,
+    }
+
 backend_tools = [
     summarize_business_case,
     summarize_requirements,
     generate_wbs,
+    get_project_total,
 ]
 
 # Extract tool names from backend_tools for comparison

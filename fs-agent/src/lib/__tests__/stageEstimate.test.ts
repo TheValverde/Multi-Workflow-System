@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { EstimateDetail } from "@/lib/estimates";
+import {
+  buildQuoteCsv,
+  calculateQuoteTotals,
+  type EstimateDetail,
+} from "@/lib/estimates";
 import { buildStageEstimatePayload } from "@/lib/stage-estimate";
 import { generateWbsFromDetail } from "@/lib/wbs";
 
@@ -88,6 +92,36 @@ const baseDetail: EstimateDetail = {
       created_at: new Date().toISOString(),
     },
   },
+  quote: {
+    record: {
+      id: "quote-1",
+      estimate_id: "est-123",
+      currency: "USD",
+      payment_terms: "Net 30",
+      delivery_timeline: "Deliver within 8 weeks.",
+      delivered: false,
+      delivered_at: null,
+      delivered_by: null,
+      updated_at: new Date().toISOString(),
+    },
+    rates: [
+      {
+        id: "rate-1",
+        estimate_id: "est-123",
+        role: "Engagement Lead",
+        rate: 200,
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: "rate-2",
+        estimate_id: "est-123",
+        role: "Backend Engineer",
+        rate: 175,
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    overrides: [],
+  },
 };
 
 describe("Stage estimate payload", () => {
@@ -97,6 +131,8 @@ describe("Stage estimate payload", () => {
     expect(payload.roleSummary["Backend Engineer"]).toBe(30);
     expect(payload.roleSummary["Engagement Lead"]).toBe(10);
     expect(payload.approvedVersion?.version).toBe(1);
+    expect(payload.totalCost).toBeGreaterThan(0);
+    expect(payload.currency).toBe("USD");
   });
 });
 
@@ -107,6 +143,19 @@ describe("generateWbsFromDetail", () => {
     expect(rows.some((row) => row.description.includes("scope-notes"))).toBe(
       true,
     );
+  });
+});
+
+describe("Quote CSV export", () => {
+  it("includes totals and payment metadata", () => {
+    const totals = calculateQuoteTotals(
+      baseDetail.effortEstimate,
+      baseDetail.quote,
+    );
+    const csv = buildQuoteCsv(baseDetail, totals);
+    expect(csv).toContain("Task Code");
+    expect(csv).toContain("Total Cost");
+    expect(csv).toContain("Net 30");
   });
 });
 

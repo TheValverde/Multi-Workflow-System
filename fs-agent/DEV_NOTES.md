@@ -205,6 +205,37 @@ The integration uses the **AG-UI** pattern from CopilotKit with LangGraph:
 - Introduced `vitest` config + `pnpm test`.
 - `src/lib/__tests__/stageEstimate.test.ts` verifies stage-estimate payload shape + WBS generator invariants (≥5 tasks, artifact references).
 
+## STORY-006 — Quote Stage Export & Delivery Flag
+
+### Data model
+
+- Added `estimate_quote`, `estimate_quote_rates`, and `estimate_quote_overrides` tables. Every estimate now has a quote record, per-role rates, and optional per-task overrides.
+- Quote updates bump `estimates.updated_at` so dashboard metrics keep “last updated” in sync.
+
+### APIs
+
+- `GET/PATCH /api/estimates/[id]/quote` handles rate edits, payment terms, overrides, and delivered toggles (with admin override support). Timeline entries record delivery/reopen events.
+- `GET /api/estimates/[id]/export` streams the CSV artifact consumed by Contracts / clipboard copy.
+- `GET /api/estimates/[id]/stage/estimate` now includes costing totals, payment terms, delivery timeline, and per-line rate/role info.
+
+### Frontend
+
+- New Quote panel renders:
+  - Role rate table with add/remove, per-task override grid, hours & cost summary.
+  - Payment terms / delivery timeline inputs.
+  - CSV export + clipboard copy, Save Quote, and Mark Delivered controls (locked once delivered).
+- Quote totals stay in sync locally via `calculateQuoteTotals`, and Copilot can call `getProjectTotal` for voice commands.
+
+### Agent tooling
+
+- Added `get_project_total` backend tool so LangGraph actions/automations can validate totals, mirroring the UI calculations.
+- Copilot action wired in `ProjectDetailView` calls the stage estimate API to confirm totals for the current project.
+
+### Export/test updates
+
+- `buildQuoteCsv` generates header + WBS line items + totals; covered alongside `calculateQuoteTotals` in Vitest.
+- CSV endpoint powers both download + clipboard flows to satisfy the “export + fallback” requirement.
+
 ## Supabase Integration (Placeholder)
 
 ### Environment Variables
