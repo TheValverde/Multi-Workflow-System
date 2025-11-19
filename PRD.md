@@ -64,7 +64,7 @@
 - Loom demo ≤15 min covering workflows + complex AI prompt.
 
 ## Non-Functional Requirements
-- Persistence via DB or files; seeds for demo data.
+- Persistence via Supabase (PostgreSQL + storage) with seed data for demos.
 - Dockerized services with ≤10 minute local setup.
 - Automated tests covering ≥3 key server functions (proposal application, copilot action execution, estimate generation logic).
 
