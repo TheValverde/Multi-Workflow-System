@@ -13,6 +13,7 @@ export type EstimateDetail = {
   timeline: TimelineRecord[];
   businessCase: BusinessCaseRecord;
   requirements: RequirementsRecord;
+  effortEstimate: EffortEstimateRecord;
 };
 
 export type ArtifactRecord = {
@@ -52,6 +53,44 @@ export type RequirementsRecord = {
   updated_at: string;
 };
 
+export type WbsRowRecord = {
+  id: string;
+  estimate_id: string;
+  task_code: string | null;
+  description: string;
+  role: string;
+  hours: number;
+  assumptions: string | null;
+  sort_order: number;
+  updated_at: string;
+};
+
+export type WbsVersionRecord = {
+  id: string;
+  estimate_id: string;
+  version_number: number;
+  actor: string | null;
+  approved: boolean;
+  notes: string | null;
+  snapshot: any;
+  created_at: string;
+};
+
+export type EffortEstimateRecord = {
+  rows: WbsRowRecord[];
+  versions: WbsVersionRecord[];
+  approvedVersion: WbsVersionRecord | null;
+};
+
+export type WbsRowInput = {
+  id?: string | null;
+  taskCode?: string | null;
+  description: string;
+  role: string;
+  hours: number;
+  assumptions?: string | null;
+};
+
 export async function fetchEstimateDetail(
   supabase: SupabaseClient,
   estimateId: string,
@@ -71,6 +110,8 @@ export async function fetchEstimateDetail(
     { data: timeline },
     businessCase,
     requirements,
+    wbsRows,
+    wbsVersions,
   ] = await Promise.all([
     supabase
       .from("estimate_artifacts")
@@ -84,6 +125,8 @@ export async function fetchEstimateDetail(
       .order("created_at", { ascending: false }),
     ensureBusinessCaseRow(supabase, estimateId),
     ensureRequirementsRow(supabase, estimateId),
+    getWbsRows(supabase, estimateId),
+    getWbsVersions(supabase, estimateId),
   ]);
 
   const mappedArtifacts: ArtifactRecord[] =
@@ -98,6 +141,7 @@ export async function fetchEstimateDetail(
     timeline: timeline ?? [],
     businessCase,
     requirements,
+    effortEstimate: buildEffortEstimate(wbsRows, wbsVersions),
   };
 }
 
@@ -222,5 +266,124 @@ export async function upsertRequirements(
     throw error;
   }
   return data as RequirementsRecord;
+}
+
+async function getWbsRows(
+  supabase: SupabaseClient,
+  estimateId: string,
+): Promise<WbsRowRecord[]> {
+  const { data, error } = await supabase
+    .from("estimate_wbs_rows")
+    .select(
+      "id,estimate_id,task_code,description,role,hours,assumptions,sort_order,updated_at",
+    )
+    .eq("estimate_id", estimateId)
+    .order("sort_order", { ascending: true });
+  if (error) {
+    throw error;
+  }
+  return (
+    data?.map((row) => ({
+      ...row,
+      hours: typeof row.hours === "number" ? row.hours : Number(row.hours) || 0,
+    })) ?? []
+  );
+}
+
+async function getWbsVersions(
+  supabase: SupabaseClient,
+  estimateId: string,
+): Promise<WbsVersionRecord[]> {
+  const { data, error } = await supabase
+    .from("estimate_wbs_versions")
+    .select(
+      "id,estimate_id,version_number,actor,approved,notes,snapshot,created_at",
+    )
+    .eq("estimate_id", estimateId)
+    .order("version_number", { ascending: false });
+  if (error) {
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function replaceWbsRows(
+  supabase: SupabaseClient,
+  estimateId: string,
+  rows: WbsRowInput[],
+) {
+  const { error: deleteError } = await supabase
+    .from("estimate_wbs_rows")
+    .delete()
+    .eq("estimate_id", estimateId);
+  if (deleteError) {
+    throw deleteError;
+  }
+  if (!rows.length) {
+    return;
+  }
+  const payload = rows.map((row, index) => ({
+    estimate_id: estimateId,
+    task_code: row.taskCode ?? `TASK-${index + 1}`,
+    description: row.description,
+    role: row.role,
+    hours: Number(row.hours) || 0,
+    assumptions: row.assumptions ?? null,
+    sort_order: index,
+    updated_at: new Date().toISOString(),
+  }));
+  const { error } = await supabase
+    .from("estimate_wbs_rows")
+    .insert(payload, { returning: "minimal" });
+  if (error) {
+    throw error;
+  }
+}
+
+export async function createWbsVersion(
+  supabase: SupabaseClient,
+  estimateId: string,
+  actor: string,
+  notes?: string,
+) {
+  const rows = await getWbsRows(supabase, estimateId);
+  const { data: latest } = await supabase
+    .from("estimate_wbs_versions")
+    .select("version_number")
+    .eq("estimate_id", estimateId)
+    .order("version_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const nextVersion = (latest?.version_number ?? 0) + 1;
+  const { error } = await supabase.from("estimate_wbs_versions").insert({
+    estimate_id: estimateId,
+    version_number: nextVersion,
+    actor,
+    approved: true,
+    notes: notes ?? null,
+    snapshot: rows,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+function buildEffortEstimate(
+  rows: WbsRowRecord[],
+  versions: WbsVersionRecord[],
+): EffortEstimateRecord {
+  const approvedVersion = versions.find((version) => version.approved) ?? null;
+  return {
+    rows,
+    versions,
+    approvedVersion,
+  };
+}
+
+export function hasApprovedEffortEstimate(
+  effortEstimate: EffortEstimateRecord | null | undefined,
+): boolean {
+  if (!effortEstimate) return false;
+  return Boolean(effortEstimate.approvedVersion);
 }
 

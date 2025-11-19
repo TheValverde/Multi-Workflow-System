@@ -104,6 +104,19 @@ export async function PATCH(
     );
   }
 
+  if (
+    body.action === "advance" &&
+    detail.estimate.stage === "Effort Estimate" &&
+    !detail.effortEstimate.approvedVersion
+  ) {
+    return NextResponse.json(
+      {
+        error: "Approve the Effort Estimate before advancing.",
+      },
+      { status: 400 },
+    );
+  }
+
   const nextStage =
     body.action === "advance"
       ? getNextStage(detail.estimate.stage) ?? (detail.estimate.stage as StageKey)

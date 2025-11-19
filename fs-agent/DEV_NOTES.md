@@ -174,6 +174,37 @@ The integration uses the **AG-UI** pattern from CopilotKit with LangGraph:
 - Agent: `requests`
 - After pulling, run `pnpm install` (root) and `cd agent && uv pip sync` (or `uv pip install -e .`) to refresh environments.
 
+## STORY-005 — Effort Estimate WBS & Stage APIs
+
+### Data model
+
+- Added `estimate_wbs_rows` + `estimate_wbs_versions` via Supabase MCP; `fetchEstimateDetail` now returns `effortEstimate` with rows, version history, and approved snapshot.
+- Advancing out of the Effort Estimate stage requires an approved version (enforced in both UI and `/api/estimates/[id]`).
+
+### API surface
+
+- `POST /api/estimates/[id]/effort/generate` → produces ≥5-row WBS drafts, persists rows, logs timeline entry.
+- `GET/PATCH /api/estimates/[id]/effort` → inline editing, manual approvals (creates version entries + timeline log).
+- `GET /api/estimates/[id]/stage/estimate` → normalized payload (hours + role summary) for contracts validation. Covered by Vitest.
+
+### Frontend UX
+
+- New `EffortEstimatePanel` with editable table, totals, role summary, and version history.
+- Copilot actions:
+  - `addWbsLineItem` to append and persist tasks.
+  - `adjustWbsHours` to update estimates in-place.
+- Shared-state timeline refresh now reflects WBS updates/approvals instantly.
+
+### LangGraph tooling
+
+- Added `generate_wbs` backend tool; reads Supabase artifacts/requirements through REST, composes rows, and persistently writes to `estimate_wbs_rows`.
+- Reuses the same heuristics as the Next.js generator so AI + UI stay in sync.
+
+### Testing
+
+- Introduced `vitest` config + `pnpm test`.
+- `src/lib/__tests__/stageEstimate.test.ts` verifies stage-estimate payload shape + WBS generator invariants (≥5 tasks, artifact references).
+
 ## Supabase Integration (Placeholder)
 
 ### Environment Variables

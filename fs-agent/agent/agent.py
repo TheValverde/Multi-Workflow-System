@@ -4,6 +4,7 @@ It defines the workflow graph, state, tools, nodes and edges.
 """
 
 import os
+import re
 from typing import Any, List, Optional
 from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
@@ -68,6 +69,31 @@ def fetch_artifacts(estimate_id: str):
         ]
 
 
+def fetch_requirements_content(estimate_id: str) -> str:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return ""
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimate_requirements",
+            params={
+                "estimate_id": f"eq.{estimate_id}",
+                "select": "content",
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return ""
+        return data[0].get("content") or ""
+    except Exception:
+        return ""
+
+
 def summarize_from_artifacts(artifacts, intro: str, outro: str):
     if artifacts and "error" in artifacts[0]:
         return f"{intro}\n\n- {artifacts[0]['error']}"
@@ -78,6 +104,137 @@ def summarize_from_artifacts(artifacts, intro: str, outro: str):
         for artifact in artifacts
     ]
     return "\n".join([intro, "", *lines, "", outro])
+
+
+def extract_requirement_highlights(content: str, limit: int = 3):
+    if not content:
+        return []
+    cleaned = re.sub(r"<[^>]+>", "\n", content.replace("&nbsp;", " "))
+    lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
+    return lines[:limit]
+
+
+def compose_wbs_rows(estimate_id: str):
+    artifacts = fetch_artifacts(estimate_id)
+    requirements_content = fetch_requirements_content(estimate_id)
+    highlights = extract_requirement_highlights(requirements_content)
+
+    rows = [
+        {
+            "taskCode": "DISC-101",
+            "description": "Run discovery & alignment workshops with stakeholders.",
+            "role": "Engagement Lead",
+            "hours": 12,
+            "assumptions": "Two sessions, 90 minutes each.",
+        },
+        {
+            "taskCode": "ARCH-110",
+            "description": "Draft solution architecture, risks, and dependencies.",
+            "role": "Solutions Architect",
+            "hours": 16,
+            "assumptions": "Leverage prior architectures if applicable.",
+        },
+        {
+            "taskCode": "PLAN-210",
+            "description": "Translate requirements into role-based task plan.",
+            "role": "Project Planner",
+            "hours": 10,
+            "assumptions": "Validated requirements available.",
+        },
+        {
+            "taskCode": "BACK-330",
+            "description": "Estimate backend/API build tasks aligned to scope.",
+            "role": "Backend Engineer",
+            "hours": 32,
+            "assumptions": "CRUD + integrations scoped in requirements.",
+        },
+        {
+            "taskCode": "QA-450",
+            "description": "Define QA strategy and effort for regression/smoke.",
+            "role": "QA Lead",
+            "hours": 14,
+            "assumptions": "Manual regression only for initial pass.",
+        },
+    ]
+
+    for idx, highlight in enumerate(highlights):
+        rows.append(
+            {
+                "taskCode": f"REQ-{idx + 1:03}",
+                "description": f"Requirement deep dive: {highlight}",
+                "role": "Business Analyst" if idx % 2 == 0 else "Technical Lead",
+                "hours": 6 + idx * 2,
+                "assumptions": "Assumes requirement remains in scope.",
+            }
+        )
+
+    for artifact in artifacts[:2]:
+        rows.append(
+            {
+                "taskCode": f"ART-{artifact['filename'][:3].upper()}",
+                "description": f"Ingest {artifact['filename']} for estimation inputs.",
+                "role": "Discovery Lead",
+                "hours": 6,
+                "assumptions": "Emphasize scope & constraints captured in artifact.",
+            }
+        )
+
+    if len(rows) < 5:
+        rows.append(
+            {
+                "taskCode": "BUF-999",
+                "description": "General engineering buffer for spikes/risks.",
+                "role": "Engineering Lead",
+                "hours": 8,
+                "assumptions": "Covers unforeseen clarifications.",
+            }
+        )
+
+    return rows
+
+
+def persist_wbs_rows(estimate_id: str, rows):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError("Supabase credentials missing for WBS generation.")
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+    delete_response = requests.delete(
+        f"{SUPABASE_URL}/rest/v1/estimate_wbs_rows",
+        params={"estimate_id": f"eq.{estimate_id}"},
+        headers=headers,
+        timeout=10,
+    )
+    delete_response.raise_for_status()
+
+    payload = [
+        {
+            "estimate_id": estimate_id,
+            "task_code": row.get("taskCode"),
+            "description": row.get("description"),
+            "role": row.get("role"),
+            "hours": row.get("hours", 0),
+            "assumptions": row.get("assumptions"),
+            "sort_order": idx,
+          }
+        for idx, row in enumerate(rows)
+    ]
+
+    if not payload:
+        return
+
+    insert_response = requests.post(
+        f"{SUPABASE_URL}/rest/v1/estimate_wbs_rows",
+        headers=headers,
+        json=payload,
+        timeout=10,
+    )
+    insert_response.raise_for_status()
 
 
 @tool
@@ -101,9 +258,22 @@ def summarize_requirements(estimate_id: str):
     outro = "Validate this list in the UI to unlock downstream stages."
     return summarize_from_artifacts(artifacts, intro, outro)
 
+@tool
+def generate_wbs(estimate_id: str):
+    """
+    Generate and persist a Work Breakdown Structure for the Effort Estimate stage.
+    """
+    rows = compose_wbs_rows(estimate_id)
+    persist_wbs_rows(estimate_id, rows)
+    return {
+        "message": f"Generated {len(rows)} WBS rows",
+        "rows": rows,
+    }
+
 backend_tools = [
     summarize_business_case,
     summarize_requirements,
+    generate_wbs,
 ]
 
 # Extract tool names from backend_tools for comparison

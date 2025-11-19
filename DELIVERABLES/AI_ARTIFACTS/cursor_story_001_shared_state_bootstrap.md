@@ -473,3 +473,10 @@ This story successfully established the foundation for the entire project:
 - **2025-11-19 14:20 UTC** — Wired `/estimates/[id]` detail view with dual TipTap editors, Copilot actions, approval/validation gates, and timeline logging.
 - **2025-11-19 14:35 UTC** — Logged Copilot generation + approvals here per acceptance criteria so downstream reviewers can audit edits outside the UI timeline.
 
+## STORY-005 — Effort Estimate WBS & Stage APIs
+
+- **2025-11-19 16:05 UTC** — Created Supabase WBS schema via MCP, extended `fetchEstimateDetail` to return rows + version history.
+- **2025-11-19 16:25 UTC** — Built WBS generate/save/approve API routes plus `/api/estimates/:id/stage/estimate` for Contracts integration.
+- **2025-11-19 16:45 UTC** — Added Effort Estimate panel (inline table editing, role/hour summaries, Copilot actions) and updated stage gating + timeline logging.
+- **2025-11-19 17:00 UTC** — Added LangGraph `generate_wbs` tool, Vitest coverage for stage payload + generator heuristics, documented everything in DEV_NOTES.
+
