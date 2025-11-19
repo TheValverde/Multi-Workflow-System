@@ -18,6 +18,8 @@
     "@copilotkit/react-core": "1.10.6",
     "@copilotkit/react-ui": "1.10.6",
     "@copilotkit/runtime": "1.10.6",
+    "@tiptap/react": "^2.6.6",
+    "@tiptap/starter-kit": "^2.6.6",
     "date-fns": "^3.6.0",
     "@supabase/supabase-js": "^2.46.1",
     "next": "16.0.1",

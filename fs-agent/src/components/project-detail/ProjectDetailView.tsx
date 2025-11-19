@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { useCoAgent } from "@copilotkit/react-core";
+import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import type {
   ArtifactRecord,
   EstimateDetail,
   TimelineRecord,
 } from "@/lib/estimates";
 import { STAGES, getStageIndex, isFinalStage } from "@/lib/stages";
+import RichTextEditor from "@/components/project-detail/RichTextEditor";
 
 type Props = {
   estimateId: string;
@@ -32,6 +33,12 @@ export default function ProjectDetailView({ estimateId }: Props) {
     null | { type: "approve" | "advance"; label: string }
   >(null);
   const [notes, setNotes] = useState("");
+  const [businessCaseDraft, setBusinessCaseDraft] = useState("");
+  const [requirementsDraft, setRequirementsDraft] = useState("");
+  const [businessCaseSaving, setBusinessCaseSaving] = useState(false);
+  const [requirementsSaving, setRequirementsSaving] = useState(false);
+  const [businessCaseGenerating, setBusinessCaseGenerating] = useState(false);
+  const [requirementsGenerating, setRequirementsGenerating] = useState(false);
   const { state: agentState, setState } = useCoAgent<AgentState>({
     name: "sample_agent",
   });
@@ -123,15 +130,205 @@ export default function ProjectDetailView({ estimateId }: Props) {
     loadDetail,
   ]);
 
+  const currentStage = detail?.estimate.stage ?? "";
   const currentStageIndex = useMemo(
-    () => getStageIndex(detail?.estimate.stage ?? ""),
-    [detail?.estimate.stage],
+    () => getStageIndex(currentStage),
+    [currentStage],
   );
 
+  useEffect(() => {
+    if (!detail) return;
+    setBusinessCaseDraft(detail.businessCase.content ?? "");
+  }, [detail?.businessCase.content, detail]);
+
+  useEffect(() => {
+    if (!detail) return;
+    setRequirementsDraft(detail.requirements.content ?? "");
+  }, [detail?.requirements.content, detail]);
+
+  const stageReady = useMemo(() => {
+    if (!detail) return false;
+    switch (detail.estimate.stage) {
+      case "Artifacts":
+        return detail.artifacts.length >= 2;
+      case "Business Case":
+        return detail.businessCase.approved;
+      case "Requirements":
+        return detail.requirements.validated;
+      default:
+        return true;
+    }
+  }, [
+    detail,
+    detail?.artifacts.length,
+    detail?.businessCase.approved,
+    detail?.requirements.validated,
+  ]);
+
   const canAdvance =
-    detail &&
-    !isFinalStage(detail.estimate.stage) &&
-    detail.artifacts.length >= 2;
+    detail && !isFinalStage(detail.estimate.stage) && stageReady;
+
+  const businessCaseDirty =
+    detail?.businessCase &&
+    (businessCaseDraft ?? "") !== (detail.businessCase.content ?? "");
+  const requirementsDirty =
+    detail?.requirements &&
+    (requirementsDraft ?? "") !== (detail.requirements.content ?? "");
+
+  const canApproveBusinessCase =
+    extractPlainText(businessCaseDraft).length > 0 &&
+    !detail?.businessCase?.approved;
+  const canValidateRequirements =
+    extractPlainText(requirementsDraft).length > 0 &&
+    !detail?.requirements?.validated;
+
+  const applyDetail = useCallback((payload: EstimateDetail) => {
+    setDetail(payload);
+    setBusinessCaseDraft(payload.businessCase.content ?? "");
+    setRequirementsDraft(payload.requirements.content ?? "");
+  }, []);
+
+  const handleBusinessCaseGenerate = useCallback(
+    async (source: "user" | "copilot" = "user") => {
+      setBusinessCaseGenerating(true);
+      setActionError(null);
+      try {
+        const res = await fetch(
+          `/api/estimates/${estimateId}/business-case/generate`,
+          {
+            method: "POST",
+          },
+        );
+        const payload = await res.json();
+        if (!res.ok) {
+          throw new Error(payload.error || "Unable to generate Business Case");
+        }
+        applyDetail(payload as EstimateDetail);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Generation failed";
+        setActionError(message);
+        if (source === "copilot") {
+          throw new Error(message);
+        }
+      } finally {
+        setBusinessCaseGenerating(false);
+      }
+    },
+    [estimateId, applyDetail],
+  );
+
+  const handleRequirementsGenerate = useCallback(
+    async (source: "user" | "copilot" = "user") => {
+      setRequirementsGenerating(true);
+      setActionError(null);
+      try {
+        const res = await fetch(
+          `/api/estimates/${estimateId}/requirements/generate`,
+          {
+            method: "POST",
+          },
+        );
+        const payload = await res.json();
+        if (!res.ok) {
+          throw new Error(payload.error || "Unable to generate Requirements");
+        }
+        applyDetail(payload as EstimateDetail);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Generation failed";
+        setActionError(message);
+        if (source === "copilot") {
+          throw new Error(message);
+        }
+      } finally {
+        setRequirementsGenerating(false);
+      }
+    },
+    [estimateId, applyDetail],
+  );
+
+  const handleBusinessCaseSave = useCallback(
+    async (options?: { approve?: boolean; notes?: string }) => {
+      setBusinessCaseSaving(true);
+      setActionError(null);
+      try {
+        const res = await fetch(`/api/estimates/${estimateId}/business-case`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: businessCaseDraft,
+            approve: options?.approve ?? false,
+            notes: options?.notes,
+          }),
+        });
+        const payload = await res.json();
+        if (!res.ok) {
+          throw new Error(payload.error || "Unable to save Business Case");
+        }
+        applyDetail(payload as EstimateDetail);
+        if (options?.approve) {
+          setNotes("");
+        }
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Save failed");
+      } finally {
+        setBusinessCaseSaving(false);
+      }
+    },
+    [estimateId, businessCaseDraft, applyDetail],
+  );
+
+  const handleRequirementsSave = useCallback(
+    async (options?: { validate?: boolean; notes?: string }) => {
+      setRequirementsSaving(true);
+      setActionError(null);
+      try {
+        const res = await fetch(`/api/estimates/${estimateId}/requirements`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: requirementsDraft,
+            validate: options?.validate ?? false,
+            notes: options?.notes,
+          }),
+        });
+        const payload = await res.json();
+        if (!res.ok) {
+          throw new Error(payload.error || "Unable to save Requirements");
+        }
+        applyDetail(payload as EstimateDetail);
+        if (options?.validate) {
+          setNotes("");
+        }
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Save failed");
+      } finally {
+        setRequirementsSaving(false);
+      }
+    },
+    [estimateId, requirementsDraft, applyDetail],
+  );
+
+  useCopilotAction({
+    name: "generateBusinessCase",
+    description:
+      "Summarize current artifacts into a polished Business Case narrative.",
+    handler: async () => {
+      await handleBusinessCaseGenerate("copilot");
+      return "Business Case draft updated";
+    },
+  });
+
+  useCopilotAction({
+    name: "generateRequirements",
+    description:
+      "Translate project artifacts into a Requirements checklist.",
+    handler: async () => {
+      await handleRequirementsGenerate("copilot");
+      return "Requirements draft updated";
+    },
+  });
 
   const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -150,7 +347,7 @@ export default function ProjectDetailView({ estimateId }: Props) {
         throw new Error(payload.error || "Failed to upload artifacts");
       }
       const payload = (await res.json()) as EstimateDetail;
-      setDetail(payload);
+      applyDetail(payload);
       const latestTimeline = payload.timeline[0]?.id ?? null;
       setStateRef.current((prev) => ({
         ...(prev || {}),
@@ -181,7 +378,7 @@ export default function ProjectDetailView({ estimateId }: Props) {
         throw new Error(payload.error || "Unable to perform action");
       }
       const typedPayload = payload as EstimateDetail;
-      setDetail(typedPayload);
+      applyDetail(typedPayload);
       setNotes("");
       setStateRef.current((prev) => ({
         ...(prev || {}),
@@ -269,6 +466,45 @@ export default function ProjectDetailView({ estimateId }: Props) {
           <StageStepper currentStageIndex={currentStageIndex} />
         </section>
 
+        <section className="grid gap-6 xl:grid-cols-2">
+          <BusinessCasePanel
+            draft={businessCaseDraft}
+            approved={detail.businessCase.approved}
+            updatedAt={detail.businessCase.updated_at}
+            dirty={Boolean(businessCaseDirty)}
+            saving={businessCaseSaving}
+            generating={businessCaseGenerating}
+            canApprove={canApproveBusinessCase}
+            onChange={setBusinessCaseDraft}
+            onGenerate={() => handleBusinessCaseGenerate("user")}
+            onSave={() => handleBusinessCaseSave()}
+            onApprove={() =>
+              handleBusinessCaseSave({
+                approve: true,
+                notes: notes.trim() || undefined,
+              })
+            }
+          />
+          <RequirementsPanel
+            draft={requirementsDraft}
+            validated={detail.requirements.validated}
+            updatedAt={detail.requirements.updated_at}
+            dirty={Boolean(requirementsDirty)}
+            saving={requirementsSaving}
+            generating={requirementsGenerating}
+            canValidate={canValidateRequirements}
+            onChange={setRequirementsDraft}
+            onGenerate={() => handleRequirementsGenerate("user")}
+            onSave={() => handleRequirementsSave()}
+            onValidate={() =>
+              handleRequirementsSave({
+                validate: true,
+                notes: notes.trim() || undefined,
+              })
+            }
+          />
+        </section>
+
         <section className="grid gap-6 lg:grid-cols-2">
           <ArtifactsPanel
             artifacts={detail.artifacts}
@@ -324,6 +560,182 @@ function StageStepper({ currentStageIndex }: { currentStageIndex: number }) {
       })}
     </ol>
   );
+}
+
+type BusinessCasePanelProps = {
+  draft: string;
+  approved: boolean;
+  updatedAt: string | null;
+  dirty: boolean;
+  saving: boolean;
+  generating: boolean;
+  canApprove: boolean;
+  onChange: (value: string) => void;
+  onGenerate: () => void;
+  onSave: () => void;
+  onApprove: () => void;
+};
+
+function BusinessCasePanel({
+  draft,
+  approved,
+  updatedAt,
+  dirty,
+  saving,
+  generating,
+  canApprove,
+  onChange,
+  onGenerate,
+  onSave,
+  onApprove,
+}: BusinessCasePanelProps) {
+  return (
+    <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">Business Case</h2>
+          <p className="text-sm text-slate-500">
+            {approved ? "Approved" : "Needs approval"} · Updated{" "}
+            {updatedAt
+              ? formatDistanceToNow(new Date(updatedAt), { addSuffix: true })
+              : "—"}
+          </p>
+        </div>
+        <span
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            approved
+              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+              : "bg-amber-50 text-amber-700 ring-1 ring-amber-100"
+          }`}
+        >
+          {approved ? "Approved" : "Pending review"}
+        </span>
+      </div>
+      <p className="mt-3 text-sm text-slate-500">
+        Generate a draft with Copilot, edit inline, then approve to unlock the
+        Requirements stage.
+      </p>
+      <div className="mt-4 space-y-3">
+        <RichTextEditor value={draft} onChange={onChange} />
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={onGenerate}
+            disabled={generating}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {generating ? "Generating…" : "Generate with Copilot"}
+          </button>
+          <button
+            onClick={onSave}
+            disabled={!dirty || saving}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving && !canApprove ? "Saving…" : "Save Draft"}
+          </button>
+          <button
+            onClick={onApprove}
+            disabled={!canApprove || saving}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+          >
+            {saving && canApprove ? "Approving…" : "Approve Business Case"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type RequirementsPanelProps = {
+  draft: string;
+  validated: boolean;
+  updatedAt: string | null;
+  dirty: boolean;
+  saving: boolean;
+  generating: boolean;
+  canValidate: boolean;
+  onChange: (value: string) => void;
+  onGenerate: () => void;
+  onSave: () => void;
+  onValidate: () => void;
+};
+
+function RequirementsPanel({
+  draft,
+  validated,
+  updatedAt,
+  dirty,
+  saving,
+  generating,
+  canValidate,
+  onChange,
+  onGenerate,
+  onSave,
+  onValidate,
+}: RequirementsPanelProps) {
+  return (
+    <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">
+            Requirements
+          </h2>
+          <p className="text-sm text-slate-500">
+            {validated ? "Validated" : "Awaiting validation"} · Updated{" "}
+            {updatedAt
+              ? formatDistanceToNow(new Date(updatedAt), { addSuffix: true })
+              : "—"}
+          </p>
+        </div>
+        <span
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            validated
+              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+              : "bg-sky-50 text-sky-700 ring-1 ring-sky-100"
+          }`}
+        >
+          {validated ? "Validated" : "Needs validation"}
+        </span>
+      </div>
+      <p className="mt-3 text-sm text-slate-500">
+        Copilot drafts requirements from the uploaded artifacts. Validate to
+        unlock the downstream stages.
+      </p>
+      <div className="mt-4 space-y-3">
+        <RichTextEditor value={draft} onChange={onChange} />
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={onGenerate}
+            disabled={generating}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {generating ? "Generating…" : "Generate with Copilot"}
+          </button>
+          <button
+            onClick={onSave}
+            disabled={!dirty || saving}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving && !canValidate ? "Saving…" : "Save Draft"}
+          </button>
+          <button
+            onClick={onValidate}
+            disabled={!canValidate || saving}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+          >
+            {saving && canValidate ? "Validating…" : "Validate Requirements"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function extractPlainText(value: string) {
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function ArtifactsPanel({

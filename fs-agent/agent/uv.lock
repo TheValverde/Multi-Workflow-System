@@ -318,6 +318,7 @@ dependencies = [
     { name = "langsmith" },
     { name = "openai" },
     { name = "python-dotenv" },
+    { name = "requests" },
     { name = "uvicorn" },
 ]
 
@@ -332,6 +333,7 @@ requires-dist = [
     { name = "langsmith", specifier = ">=0.4.23" },
     { name = "openai", specifier = ">=1.68.2,<2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0,<2.0.0" },
+    { name = "requests", specifier = ">=2.32.3" },
     { name = "uvicorn", specifier = ">=0.29.0,<1.0.0" },
 ]
 

@@ -465,3 +465,11 @@ This story successfully established the foundation for the entire project:
 
 **Ready for Next Sprint**: All subsequent stories can now build on this stable, well-documented foundation.
 
+---
+
+## STORY-004 — Business Case & Requirements Agent Flow
+
+- **2025-11-19 14:05 UTC** — Added Supabase tables `estimate_business_case` and `estimate_requirements` plus Copilot generation endpoints that return TipTap-friendly HTML.
+- **2025-11-19 14:20 UTC** — Wired `/estimates/[id]` detail view with dual TipTap editors, Copilot actions, approval/validation gates, and timeline logging.
+- **2025-11-19 14:35 UTC** — Logged Copilot generation + approvals here per acceptance criteria so downstream reviewers can audit edits outside the UI timeline.
+

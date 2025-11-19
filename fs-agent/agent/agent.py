@@ -3,6 +3,7 @@ This is the main entry point for the agent.
 It defines the workflow graph, state, tools, nodes and edges.
 """
 
+import os
 from typing import Any, List, Optional
 from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
@@ -13,6 +14,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.types import Command
 from langgraph.graph import MessagesState
 from langgraph.prebuilt import ToolNode
+import requests
 
 class AgentState(MessagesState):
     """
@@ -28,24 +30,80 @@ class AgentState(MessagesState):
     selected_project_id: Optional[str] = None
     selected_project_name: Optional[str] = None
     selected_project_stage: Optional[str] = None
+    timeline_version: Optional[str] = None
     # your_custom_agent_state: str = ""
 
-@tool
-def get_weather(location: str):
-    """
-    Get the weather for a given location.
-    """
-    return f"The weather for {location} is 70 degrees."
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
-# @tool
-# def your_tool_here(your_arg: str):
-#     """Your tool description here."""
-#     print(f"Your tool logic here")
-#     return "Your tool response here."
+
+def fetch_artifacts(estimate_id: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return []
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimate_artifacts",
+            params={
+                "estimate_id": f"eq.{estimate_id}",
+                "select": "filename,created_at,size_bytes",
+                "order": "created_at.desc",
+                "limit": "8",
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+              },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as exc:
+        return [
+            {
+                "filename": "Unable to load artifacts",
+                "created_at": "",
+                "size_bytes": 0,
+                "error": str(exc),
+            }
+        ]
+
+
+def summarize_from_artifacts(artifacts, intro: str, outro: str):
+    if artifacts and "error" in artifacts[0]:
+        return f"{intro}\n\n- {artifacts[0]['error']}"
+    if not artifacts:
+        return f"{intro}\n\n- No artifacts were found for this estimate.\n\n{outro}"
+    lines = [
+        f"- {artifact['filename']} ({artifact.get('size_bytes') or 0} bytes)"
+        for artifact in artifacts
+    ]
+    return "\n".join([intro, "", *lines, "", outro])
+
+
+@tool
+def summarize_business_case(estimate_id: str):
+    """
+    Summarize the uploaded artifacts into a Business Case outline.
+    """
+    artifacts = fetch_artifacts(estimate_id)
+    intro = "### Executive Summary\nCopilot reviewed the latest artifacts and captured the following signals:"
+    outro = "Use these signals to finalize the Business Case stage."
+    return summarize_from_artifacts(artifacts, intro, outro)
+
+
+@tool
+def summarize_requirements(estimate_id: str):
+    """
+    Translate artifacts into a Requirements checklist.
+    """
+    artifacts = fetch_artifacts(estimate_id)
+    intro = "### Requirements Backlog\nEach uploaded artifact maps to at least one requirement:"
+    outro = "Validate this list in the UI to unlock downstream stages."
+    return summarize_from_artifacts(artifacts, intro, outro)
 
 backend_tools = [
-    get_weather
-    # your_tool_here
+    summarize_business_case,
+    summarize_requirements,
 ]
 
 # Extract tool names from backend_tools for comparison
