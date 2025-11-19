@@ -3,7 +3,7 @@ This is the main entry point for the agent.
 It defines the workflow graph, state, tools, nodes and edges.
 """
 
-from typing import Any, List
+from typing import Any, List, Optional
 from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, BaseMessage
@@ -19,11 +19,15 @@ class AgentState(MessagesState):
     Here we define the state of the agent
 
     In this instance, we're inheriting from CopilotKitState, which will bring in
-    the CopilotKitState fields. We're also adding a custom field, `language`,
-    which will be used to set the language of the agent.
+    the CopilotKitState fields. We're also adding a few custom fields that let
+    the UI synchronize the currently selected project when navigating between
+    list and detail views.
     """
     proverbs: List[str] = []
     tools: List[Any]
+    selected_project_id: Optional[str] = None
+    selected_project_name: Optional[str] = None
+    selected_project_stage: Optional[str] = None
     # your_custom_agent_state: str = ""
 
 @tool

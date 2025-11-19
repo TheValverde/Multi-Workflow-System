@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
 import { useState } from "react";
@@ -22,6 +23,24 @@ export default function CopilotKitPage() {
 
   return (
     <main style={{ "--copilot-kit-primary-color": themeColor } as CopilotKitCSSProperties}>
+      <div className="absolute left-0 right-0 top-0 z-10 border-b border-white/20 bg-slate-900/40 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4 text-sm text-white">
+          <div className="font-semibold tracking-wide uppercase text-white/80">
+            fs-agent Prototype
+          </div>
+          <div className="flex items-center gap-3 text-white/90">
+            <span className="text-xs uppercase tracking-widest text-white/60">
+              Stories
+            </span>
+            <Link
+              href="/estimates"
+              className="rounded-full bg-white/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-white ring-1 ring-white/30 transition hover:bg-white/20"
+            >
+              Open Estimates List
+            </Link>
+          </div>
+        </div>
+      </div>
       <YourMainContent themeColor={themeColor} />
       <CopilotSidebar
         clickOutsideToClose={false}

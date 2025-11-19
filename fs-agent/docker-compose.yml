@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  # Next.js Frontend Application
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: fs-agent-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - NEXT_PUBLIC_CPK_PUBLIC_API_KEY=${NEXT_PUBLIC_CPK_PUBLIC_API_KEY}
+      - LANGGRAPH_DEPLOYMENT_URL=http://agent:8123
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - agent
+    networks:
+      - fs-agent-network
+    restart: unless-stopped
+
+  # LangGraph Agent Service
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: fs-agent-langgraph
+    ports:
+      - "8123:8123"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-fs-agent}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+    volumes:
+      - ./agent:/app
+      - agent-venv:/app/.venv
+    working_dir: /app
+    command: ["uv", "run", "langgraph", "dev", "--host", "0.0.0.0", "--port", "8123"]
+    networks:
+      - fs-agent-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8123/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  fs-agent-network:
+    driver: bridge
+
+volumes:
+  agent-venv:
+
