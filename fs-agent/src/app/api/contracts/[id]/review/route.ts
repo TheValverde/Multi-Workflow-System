@@ -36,6 +36,9 @@ export async function POST(
       );
     }
 
+    // Use content_html (from autosave) if available, otherwise fall back to content
+    const currentContent = agreement.content_html || agreement.content || "";
+    
     // Save draft if storage_path provided
     if (body.storage_path) {
       await saveReviewDraft(
@@ -46,6 +49,9 @@ export async function POST(
         body.uploaded_by ?? null,
       );
     }
+    
+    // Use the latest saved content for comparison
+    const contentToReview = body.content || currentContent;
 
     // Generate review proposals using LLM
     // For now, we'll create a simple mock response
@@ -58,7 +64,7 @@ export async function POST(
     const proposals: ReviewProposal[] = [];
     
     // Proposal 1: Payment terms
-    if (body.content?.includes("Net 60") || body.content?.includes("net 60")) {
+    if (contentToReview?.includes("Net 60") || contentToReview?.includes("net 60")) {
       proposals.push({
         id: "prop-1",
         before: "Payment terms: Net 60",
@@ -69,7 +75,7 @@ export async function POST(
     }
     
     // Proposal 2: Termination notice
-    if (body.content?.includes("30 days notice") || body.content?.includes("30-day")) {
+    if (contentToReview?.includes("30 days notice") || contentToReview?.includes("30-day")) {
       proposals.push({
         id: "prop-2",
         before: "Client may terminate with 30 days notice",
@@ -80,10 +86,10 @@ export async function POST(
     }
     
     // Proposal 3: Change order process
-    if (body.content && !body.content.includes("change order") && !body.content.includes("Change Order")) {
+    if (contentToReview && !contentToReview.includes("change order") && !contentToReview.includes("Change Order")) {
       proposals.push({
         id: "prop-3",
-        before: body.content.substring(0, 100) + "...",
+        before: contentToReview.substring(0, 100) + "...",
         after: "Any scope change request must be submitted in writing. VBT responds within five business days with fee, schedule, and service impacts.",
         rationale: "Change order process required per policy",
         section: "Change Management",

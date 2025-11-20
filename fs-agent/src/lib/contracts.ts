@@ -7,6 +7,10 @@ export type AgreementRecord = {
   type: AgreementType;
   counterparty: string;
   content: string;
+  content_html?: string | null;
+  content_text?: string | null;
+  last_auto_saved_at?: string | null;
+  auto_save_version?: number | null;
   current_version: number;
   linked_estimate_id: string | null;
   ready_for_signature: boolean;

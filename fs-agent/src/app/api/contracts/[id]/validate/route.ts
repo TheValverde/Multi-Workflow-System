@@ -54,9 +54,12 @@ export async function GET(
       );
     }
 
+    // Use content_html (from autosave) if available, otherwise fall back to content
+    const contentToValidate = agreement.content_html || agreement.content || "";
+    
     const estimateData = buildStageEstimatePayload(estimateDetail);
     const discrepancies = validateSowAgainstEstimate(
-      agreement.content,
+      contentToValidate,
       estimateData,
     );
 

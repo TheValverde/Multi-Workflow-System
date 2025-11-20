@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
+import { useAutoSyncDocument } from "@/hooks/useAutoSyncDocument";
 import RichTextEditor from "@/components/project-detail/RichTextEditor";
 import type {
   AgreementDetail,
@@ -16,6 +17,8 @@ type AgentState = {
   selected_agreement_id?: string;
   selected_agreement_type?: string;
   selected_agreement_version?: number;
+  draft_status?: "idle" | "saving" | "saved" | "offline" | "error";
+  last_auto_saved_at?: string | null;
 };
 
 export default function AgreementDetailView({
@@ -26,7 +29,6 @@ export default function AgreementDetailView({
   const [agreement, setAgreement] = useState<AgreementDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [content, setContent] = useState("");
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -38,6 +40,7 @@ export default function AgreementDetailView({
   const [markingReady, setMarkingReady] = useState(false);
   const [overrideRationale, setOverrideRationale] = useState("");
   const [showOverrideModal, setShowOverrideModal] = useState(false);
+  const [showFinishingSaveModal, setShowFinishingSaveModal] = useState(false);
   const router = useRouter();
 
   const { state, setState } = useCoAgent<AgentState>({
@@ -46,8 +49,37 @@ export default function AgreementDetailView({
   });
 
   const setStateRef = useRef(setState);
+  const stateRef = useRef(state);
   setStateRef.current = setState;
+  stateRef.current = state;
   
+  // Auto-save hook
+  const autoSave = useAutoSyncDocument({
+    documentId: agreementId,
+    content,
+    saveEndpoint: `/api/contracts/${agreementId}/autosave`,
+    onStatusChange: (status) => {
+      setStateRef.current({
+        ...stateRef.current,
+        draft_status: status,
+      });
+    },
+    onSaveComplete: (savedAt) => {
+      setStateRef.current({
+        ...stateRef.current,
+        draft_status: "saved",
+        last_auto_saved_at: savedAt,
+      });
+    },
+    onSaveError: (errorMsg) => {
+      setError(`Auto-save failed: ${errorMsg}`);
+      setStateRef.current({
+        ...stateRef.current,
+        draft_status: "error",
+      });
+    },
+  });
+
   // Sync copilot context for workflow awareness
   useCopilotContext(
     "contracts",
@@ -79,6 +111,20 @@ export default function AgreementDetailView({
     loadAgreement();
   }, [loadAgreement]);
 
+  // Navigation safety: warn if leaving during save
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (autoSave.isSaving) {
+        e.preventDefault();
+        e.returnValue = "You have unsaved changes. Are you sure you want to leave?";
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [autoSave.isSaving]);
+
   useEffect(() => {
     // Load estimates for selector
     fetch("/api/estimates")
@@ -96,12 +142,23 @@ export default function AgreementDetailView({
   useEffect(() => {
     if (agreement) {
       setStateRef.current({
+        ...stateRef.current,
         selected_agreement_id: agreement.id,
         selected_agreement_type: agreement.type,
         selected_agreement_version: agreement.current_version,
+        draft_status: autoSave.status,
+        last_auto_saved_at: autoSave.lastSavedAt,
       });
+      stateRef.current = {
+        ...stateRef.current,
+        selected_agreement_id: agreement.id,
+        selected_agreement_type: agreement.type,
+        selected_agreement_version: agreement.current_version,
+        draft_status: autoSave.status,
+        last_auto_saved_at: autoSave.lastSavedAt,
+      };
     }
-  }, [agreement]);
+  }, [agreement, autoSave.status, autoSave.lastSavedAt]);
 
   useEffect(() => {
     if (!agreement) return;
@@ -111,30 +168,22 @@ export default function AgreementDetailView({
     }
   }, [state?.selected_agreement_version, agreement?.current_version, loadAgreement, agreement?.id]);
 
-  const handleSave = async () => {
-    if (!agreement) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/contracts/${agreement.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      });
-      if (!res.ok) {
-        throw new Error("Failed to save");
-      }
-      await loadAgreement();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save");
-    } finally {
-      setSaving(false);
-    }
+  // Manual save trigger (for force save if needed)
+  const handleForceSave = async () => {
+    await autoSave.forceSave();
   };
 
   const handleCreateVersion = async () => {
     if (!agreement) return;
     if (!confirm("Create a new version with current content?")) return;
-    setSaving(true);
+    
+    // Wait for any pending save to complete
+    if (autoSave.isSaving) {
+      setShowFinishingSaveModal(true);
+      await autoSave.forceSave();
+      setShowFinishingSaveModal(false);
+    }
+
     try {
       const res = await fetch(`/api/contracts/${agreement.id}/versions`, {
         method: "POST",
@@ -151,8 +200,6 @@ export default function AgreementDetailView({
       setSelectedVersion(agreement.current_version + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create version");
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -199,6 +246,12 @@ export default function AgreementDetailView({
 
   const handleValidate = async () => {
     if (!agreement) return;
+    
+    // Wait for any pending save to complete before validating
+    if (autoSave.isSaving) {
+      await autoSave.forceSave();
+    }
+    
     setValidating(true);
     try {
       const res = await fetch(`/api/contracts/${agreement.id}/validate`);
@@ -409,15 +462,15 @@ export default function AgreementDetailView({
                 Review Draft
               </button>
               <button
-                onClick={handleSave}
-                disabled={saving}
+                onClick={handleForceSave}
+                disabled={autoSave.isSaving}
                 className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
-                {saving ? "Saving…" : "Save Changes"}
+                {autoSave.isSaving ? "Saving…" : "Force Save"}
               </button>
               <button
                 onClick={handleCreateVersion}
-                disabled={saving}
+                disabled={autoSave.isSaving}
                 className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
               >
                 Create Version
@@ -448,9 +501,12 @@ export default function AgreementDetailView({
         <div className="grid gap-8 lg:grid-cols-[1fr,320px]">
           <section className="space-y-6">
             <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-              <h2 className="mb-4 text-xl font-semibold text-slate-900">
-                Agreement Content
-              </h2>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-slate-900">
+                  Agreement Content
+                </h2>
+                <AutoSaveStatusBadge status={autoSave.status} lastSavedAt={autoSave.lastSavedAt} />
+              </div>
               <RichTextEditor value={content} onChange={setContent} />
             </div>
           </section>
@@ -681,7 +737,68 @@ export default function AgreementDetailView({
           </div>
         </div>
       )}
+
+      {showFinishingSaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-xl font-semibold text-slate-900">
+              Finishing Save…
+            </h3>
+            <p className="text-sm text-slate-600">
+              Please wait while we save your changes before creating a new version.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function AutoSaveStatusBadge({
+  status,
+  lastSavedAt,
+}: {
+  status: "idle" | "saving" | "saved" | "offline" | "error";
+  lastSavedAt: string | null;
+}) {
+  const getStatusConfig = () => {
+    switch (status) {
+      case "saving":
+        return {
+          text: "Saving…",
+          className: "bg-blue-50 text-blue-700 border-blue-200",
+        };
+      case "saved":
+        return {
+          text: lastSavedAt
+            ? `Saved ${formatDistanceToNow(new Date(lastSavedAt), { addSuffix: true })}`
+            : "Saved just now",
+          className: "bg-green-50 text-green-700 border-green-200",
+        };
+      case "offline":
+        return {
+          text: "Offline – retrying…",
+          className: "bg-yellow-50 text-yellow-700 border-yellow-200",
+        };
+      case "error":
+        return {
+          text: "Save failed",
+          className: "bg-rose-50 text-rose-700 border-rose-200",
+        };
+      default:
+        return null;
+    }
+  };
+
+  const config = getStatusConfig();
+  if (!config) return null;
+
+  return (
+    <span
+      className={`rounded-full border px-3 py-1 text-xs font-medium ${config.className}`}
+    >
+      {config.text}
+    </span>
   );
 }
 
