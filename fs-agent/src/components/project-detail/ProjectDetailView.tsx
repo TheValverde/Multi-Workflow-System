@@ -99,8 +99,11 @@ export default function ProjectDetailView({ estimateId }: Props) {
     setStateRef.current = setState;
   }, [setState]);
 
-  // Build stage gates
-  const stageGates = useMemo(() => buildStageGateStatus(detail ?? null), [detail]);
+  // Build stage gates (include local payment terms state for real-time gate checking)
+  const stageGates = useMemo(
+    () => buildStageGateStatus(detail ?? null, paymentTerms),
+    [detail, paymentTerms],
+  );
 
   // Update Copilot shared state with gates
   useEffect(() => {
@@ -1933,12 +1936,10 @@ function QuotePanel({
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Payment Terms
           </label>
-          <textarea
+          <PaymentTermsSelector
             value={paymentTerms}
-            onChange={(event) => onPaymentTermsChange(event.target.value)}
+            onChange={onPaymentTermsChange}
             disabled={disabled}
-            placeholder="e.g., Net 30 with 10% upfront."
-            className="w-full rounded-2xl border border-slate-200 p-3 text-sm"
           />
         </div>
         <div className="space-y-2">
@@ -2205,6 +2206,81 @@ function ConfirmationDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const PAYMENT_TERMS_OPTIONS = [
+  { value: "", label: "Select payment terms..." },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+  { value: "Custom", label: "Custom..." },
+];
+
+function PaymentTermsSelector({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  const isCustom = value && !PAYMENT_TERMS_OPTIONS.some((opt) => opt.value === value && opt.value !== "Custom");
+  const [customValue, setCustomValue] = useState(value && isCustom ? value : "");
+  const [showCustomInput, setShowCustomInput] = useState(isCustom);
+
+  const handleSelectChange = (selectedValue: string) => {
+    if (selectedValue === "Custom") {
+      setShowCustomInput(true);
+      onChange(customValue);
+    } else {
+      setShowCustomInput(false);
+      onChange(selectedValue);
+    }
+  };
+
+  const handleCustomInputChange = (inputValue: string) => {
+    setCustomValue(inputValue);
+    onChange(inputValue);
+  };
+
+  // Sync custom value when external value changes
+  useEffect(() => {
+    if (value && !PAYMENT_TERMS_OPTIONS.some((opt) => opt.value === value && opt.value !== "Custom")) {
+      setCustomValue(value);
+      setShowCustomInput(true);
+    } else if (value && PAYMENT_TERMS_OPTIONS.some((opt) => opt.value === value)) {
+      setShowCustomInput(false);
+    }
+  }, [value]);
+
+  return (
+    <div className="space-y-2">
+      <select
+        value={showCustomInput ? "Custom" : value || ""}
+        onChange={(e) => handleSelectChange(e.target.value)}
+        disabled={disabled}
+        className="w-full rounded-2xl border border-slate-200 p-3 text-sm"
+      >
+        {PAYMENT_TERMS_OPTIONS.map((option) => (
+          <option key={option.value || "empty"} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {showCustomInput && (
+        <input
+          type="text"
+          value={customValue}
+          onChange={(e) => handleCustomInputChange(e.target.value)}
+          disabled={disabled}
+          placeholder="Enter custom payment terms..."
+          className="w-full rounded-2xl border border-slate-200 p-3 text-sm"
+        />
+      )}
     </div>
   );
 }

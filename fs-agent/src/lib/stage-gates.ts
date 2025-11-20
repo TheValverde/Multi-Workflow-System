@@ -21,6 +21,7 @@ export type StageGates = {
 
 export function buildStageGateStatus(
   detail: EstimateDetail | null,
+  localPaymentTerms?: string,
 ): StageGates {
   if (!detail) {
     return {};
@@ -184,8 +185,10 @@ export function buildStageGateStatus(
 
   // Quote Stage
   const hasRates = detail.quote?.rates?.length > 0;
-  const hasPaymentTerms =
-    detail.quote?.payment_terms && detail.quote.payment_terms.trim().length > 0;
+  // Check both saved payment_terms and any local draft state
+  const savedPaymentTerms = detail.quote?.payment_terms?.trim() || "";
+  const localPaymentTermsValue = localPaymentTerms?.trim() || "";
+  const hasPaymentTerms = savedPaymentTerms.length > 0 || localPaymentTermsValue.length > 0;
   const quoteReady = hasRates && hasPaymentTerms;
 
   gates["Quote"] = {
