@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { useCopilotAction } from "@copilotkit/react-core";
+import { useCopilotContext } from "@/hooks/useCopilotContext";
 
 type PolicyRecord = {
   id: string;
@@ -55,6 +56,8 @@ const emptyPolicyForm: PolicyFormState = {
 const EXEMPLAR_TYPES = ["MSA", "SOW", "NDA", "Addendum"];
 
 export default function PoliciesPage() {
+  // Sync copilot context for workflow awareness
+  useCopilotContext("contracts", null, null);
   const [policies, setPolicies] = useState<PolicyRecord[]>([]);
   const [exemplars, setExemplars] = useState<ExemplarRecord[]>([]);
   const [summary, setSummary] = useState<SummaryRecord | null>(null);

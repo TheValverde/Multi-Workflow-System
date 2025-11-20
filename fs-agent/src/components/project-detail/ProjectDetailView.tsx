@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
+import { useCopilotContext } from "@/hooks/useCopilotContext";
 import type {
   ArtifactRecord,
   EstimateDetail,
@@ -79,6 +80,14 @@ export default function ProjectDetailView({ estimateId }: Props) {
     name: "sample_agent",
   });
   const setStateRef = useRef(setState);
+  
+  // Sync copilot context for workflow awareness
+  useCopilotContext(
+    "estimates",
+    estimateId,
+    "project",
+    detail ? { name: detail.name, stage: detail.stage } : undefined
+  );
 
   useEffect(() => {
     setStateRef.current = setState;

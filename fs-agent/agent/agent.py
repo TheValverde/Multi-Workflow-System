@@ -19,20 +19,23 @@ import requests
 
 class AgentState(MessagesState):
     """
-    Here we define the state of the agent
-
-    In this instance, we're inheriting from CopilotKitState, which will bring in
-    the CopilotKitState fields. We're also adding a few custom fields that let
-    the UI synchronize the currently selected project when navigating between
-    list and detail views.
+    Global Copilot State - extends CopilotKitState with workflow and entity context.
+    
+    This state synchronizes across the Estimates and Contracts workflows, allowing
+    the agent to be context-aware of which workflow and entity the user is viewing.
     """
     proverbs: List[str] = []
     tools: List[Any]
+    # Legacy project fields (for backward compatibility)
     selected_project_id: Optional[str] = None
     selected_project_name: Optional[str] = None
     selected_project_stage: Optional[str] = None
     timeline_version: Optional[str] = None
-    # your_custom_agent_state: str = ""
+    # Global copilot workflow context
+    workflow: Optional[str] = None  # "estimates" | "contracts"
+    entity_id: Optional[str] = None  # project_id or agreement_id
+    entity_type: Optional[str] = None  # "project" | "agreement"
+    entity_data: Optional[dict] = None  # Snapshot of current entity
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -466,12 +469,114 @@ def load_exemplar_contracts(contract_type: str):
         "exemplars": exemplars,
     }
 
+
+@tool
+def summarize_pushbacks(agreement_id: str):
+    """
+    Summarize policy conflicts and pushbacks from review proposals and notes for an agreement.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return {"error": "Supabase credentials missing"}
+    try:
+        # Fetch agreement notes
+        notes_response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/contract_notes",
+            params={
+                "agreement_id": f"eq.{agreement_id}",
+                "select": "note_text,created_at",
+                "order": "created_at.desc",
+                "limit": 10,
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        notes_response.raise_for_status()
+        notes = notes_response.json() or []
+        
+        # Fetch agreement details
+        agreement_response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/contract_agreements",
+            params={
+                "id": f"eq.{agreement_id}",
+                "select": "type,counterparty,content",
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        agreement_response.raise_for_status()
+        agreement_data = agreement_response.json()
+        agreement = agreement_data[0] if agreement_data else {}
+        
+        summary_parts = [
+            f"### Pushback Summary for {agreement.get('type', 'Agreement')} - {agreement.get('counterparty', 'Unknown')}",
+            "",
+        ]
+        
+        if notes:
+            summary_parts.append("**Recent Notes:**")
+            for note in notes[:5]:
+                summary_parts.append(f"- {note.get('note_text', '')}")
+        else:
+            summary_parts.append("No notes found.")
+        
+        return {
+            "summary": "\n".join(summary_parts),
+            "note_count": len(notes),
+        }
+    except Exception as exc:
+        return {
+            "error": f"Unable to summarize pushbacks: {str(exc)}",
+            "summary": "Error loading agreement data.",
+        }
+
+
+@tool
+def add_agreement_note(agreement_id: str, note: str):
+    """
+    Add a note to an agreement, persisting it to Supabase.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return {"error": "Supabase credentials missing"}
+    try:
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/contract_notes",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            },
+            json={
+                "agreement_id": agreement_id,
+                "note_text": note,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return {
+            "message": f"Note added to agreement {agreement_id}",
+            "note": note,
+        }
+    except Exception as exc:
+        return {
+            "error": f"Unable to add note: {str(exc)}",
+        }
+
+
 backend_tools = [
     summarize_business_case,
     summarize_requirements,
     generate_wbs,
     get_project_total,
     load_exemplar_contracts,
+    summarize_pushbacks,
+    add_agreement_note,
 ]
 
 # Extract tool names from backend_tools for comparison
@@ -508,15 +613,53 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Litera
     )
 
     # 3. Define the system message by which the chat model will be run
-    system_message = SystemMessage(
-        content=f"You are a helpful assistant. The current proverbs are {state.get('proverbs', [])}."
-    )
+    workflow = state.get("workflow")
+    entity_type = state.get("entity_type")
+    entity_id = state.get("entity_id")
+    entity_data = state.get("entity_data") or {}
+    
+    # Build workflow-aware system prompt
+    context_parts = []
+    if workflow == "estimates":
+        project_name = state.get("selected_project_name") or (entity_data.get("name") if entity_data else "Unknown Project")
+        project_stage = state.get("selected_project_stage") or (entity_data.get("stage") if entity_data else "Unknown Stage")
+        context_parts.append(f"You are assisting with the Estimates workflow.")
+        context_parts.append(f"Current project: {project_name} (Stage: {project_stage})")
+        context_parts.append("You can help with: generating business cases, requirements, WBS, calculating totals, adjusting hours, and adding line items.")
+    elif workflow == "contracts":
+        counterparty = entity_data.get("counterparty", "Unknown") if entity_data else "Unknown"
+        agreement_type = entity_data.get("type", "Unknown") if entity_data else "Unknown"
+        context_parts.append(f"You are assisting with the Contracts workflow.")
+        context_parts.append(f"Current agreement: {agreement_type} for {counterparty}")
+        context_parts.append("You can help with: reviewing drafts, summarizing pushbacks, adding notes, applying proposals, and validating against estimates.")
+    else:
+        context_parts.append("You are a helpful assistant for the VBT estimation and contracts platform.")
+        context_parts.append("You can assist with both Estimates and Contracts workflows.")
+    
+    if entity_id:
+        context_parts.append(f"Current entity ID: {entity_id}")
+    
+    system_content = "\n".join(context_parts)
+    system_message = SystemMessage(content=system_content)
 
     # 4. Run the model to generate a response
+    # Log interaction for AI_ARTIFACTS.md (development only)
+    if os.environ.get("ENVIRONMENT") == "development":
+        print(f"[Copilot] Workflow: {workflow}, Entity: {entity_id}, Type: {entity_type}")
+        print(f"[Copilot] System prompt: {system_content[:200]}...")
+    
     response = await model_with_tools.ainvoke([
         system_message,
         *state["messages"],
     ], config)
+    
+    # Log response for AI_ARTIFACTS.md
+    if os.environ.get("ENVIRONMENT") == "development":
+        tool_calls = getattr(response, "tool_calls", None)
+        if tool_calls:
+            print(f"[Copilot] Tool calls: {[tc.get('name') for tc in tool_calls]}")
+        else:
+            print(f"[Copilot] Response: {response.content[:200] if hasattr(response, 'content') else 'No content'}...")
 
     # only route to tool node if tool is not in the tools list
     if route_to_tool_node(response):

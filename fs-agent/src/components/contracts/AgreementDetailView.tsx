@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
+import { useCopilotContext } from "@/hooks/useCopilotContext";
 import RichTextEditor from "@/components/project-detail/RichTextEditor";
 import type {
   AgreementDetail,
@@ -46,6 +47,14 @@ export default function AgreementDetailView({
 
   const setStateRef = useRef(setState);
   setStateRef.current = setState;
+  
+  // Sync copilot context for workflow awareness
+  useCopilotContext(
+    "contracts",
+    agreementId,
+    "agreement",
+    agreement ? { type: agreement.type, counterparty: agreement.counterparty } : undefined
+  );
 
   const loadAgreement = useCallback(async () => {
     setLoading(true);

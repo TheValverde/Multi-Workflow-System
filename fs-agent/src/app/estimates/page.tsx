@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useCoAgent } from "@copilotkit/react-core";
+import { useCopilotContext } from "@/hooks/useCopilotContext";
 
 type Stage =
   | "Artifacts"
@@ -58,6 +59,9 @@ export default function EstimatesPage() {
   const { state: coAgentState, setState } = useCoAgent<AgentState>({
     name: "sample_agent",
   });
+  
+  // Sync copilot context for workflow awareness
+  useCopilotContext("estimates", null, null);
 
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [loading, setLoading] = useState(true);

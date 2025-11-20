@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
+import { useCopilotContext } from "@/hooks/useCopilotContext";
 import type { AgreementRecord } from "@/lib/contracts";
 
 export default function ContractsPage() {
@@ -10,6 +11,9 @@ export default function ContractsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  
+  // Sync copilot context for workflow awareness
+  useCopilotContext("contracts", null, null);
 
   const loadAgreements = useCallback(async () => {
     setLoading(true);
