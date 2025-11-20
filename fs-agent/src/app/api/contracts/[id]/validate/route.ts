@@ -133,11 +133,38 @@ function validateSowAgainstEstimate(
   }
 
   // Hours validation - check if SOW mentions hours that differ significantly
-  const hourMentions = contentLower.match(/(\d+)\s*(?:hours?|hrs?)/gi);
-  if (hourMentions && estimate.totalHours > 0) {
-    const mentionedHours = hourMentions
-      .map((m) => parseInt(m.match(/\d+/)![0]))
-      .reduce((sum, h) => sum + h, 0);
+  // Match patterns like "38 hours", "38.0 hours", "approximately 38 hours", etc.
+  // Look for the most prominent mention (usually in ESTIMATED COST section)
+  const hourPatterns = [
+    /approximately\s+(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)/i,
+    /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\s*(?:total|combined|estimated|approximately)?/i,
+    /estimated.*?(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)/i,
+  ];
+  
+  let mentionedHours = 0;
+  for (const pattern of hourPatterns) {
+    const match = contentLower.match(pattern);
+    if (match) {
+      mentionedHours = parseFloat(match[1]);
+      break; // Use the first match (most specific pattern)
+    }
+  }
+  
+  // Fallback: if no specific pattern matched, try simple extraction
+  if (mentionedHours === 0) {
+    const simpleMatches = contentLower.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)/gi);
+    if (simpleMatches && simpleMatches.length > 0) {
+      // Extract the largest number mentioned (likely the total)
+      const allHours = simpleMatches
+        .map((m) => parseFloat(m.match(/(\d+(?:\.\d+)?)/)![0]))
+        .filter((h) => h > 0);
+      if (allHours.length > 0) {
+        mentionedHours = Math.max(...allHours);
+      }
+    }
+  }
+  
+  if (mentionedHours > 0 && estimate.totalHours > 0) {
     const delta = Math.abs(mentionedHours - estimate.totalHours);
     const percentDelta = (delta / estimate.totalHours) * 100;
 
@@ -152,6 +179,17 @@ function validateSowAgainstEstimate(
         actual: `~${mentionedHours} hours`,
       });
     }
+  } else if (mentionedHours === 0 && estimate.totalHours > 0) {
+    // SOW doesn't mention hours but estimate has them
+    discrepancies.push({
+      id: "hours-2",
+      category: "hours",
+      severity: "warning",
+      message: `SOW does not clearly specify total hours, but WBS totals ${estimate.totalHours} hours`,
+      reference: "Scope/Effort section",
+      expected: `Mention ~${estimate.totalHours} hours`,
+      actual: "Not specified",
+    });
   }
 
   // Scope validation - check if WBS tasks are referenced in SOW

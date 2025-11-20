@@ -13,6 +13,7 @@ export type EstimateDetail = {
   timeline: TimelineRecord[];
   businessCase: BusinessCaseRecord;
   requirements: RequirementsRecord;
+  solutionArchitecture: SolutionArchitectureRecord;
   effortEstimate: EffortEstimateRecord;
   quote: QuoteDetail;
 };
@@ -25,6 +26,18 @@ export type ArtifactRecord = {
   uploaded_by: string | null;
   created_at: string;
   public_url: string;
+  extract?: ArtifactExtractRecord | null;
+};
+
+export type ArtifactExtractRecord = {
+  id: string;
+  artifact_id: string;
+  content_text: string | null;
+  content_html: string | null;
+  summary: string | null;
+  extraction_status: "pending" | "processing" | "ready" | "failed";
+  error_message: string | null;
+  extracted_at: string | null;
 };
 
 export type TimelineRecord = {
@@ -51,6 +64,15 @@ export type RequirementsRecord = {
   content: string | null;
   validated: boolean;
   validated_by: string | null;
+  updated_at: string;
+};
+
+export type SolutionArchitectureRecord = {
+  id: string;
+  estimate_id: string;
+  content: string | null;
+  approved: boolean;
+  approved_by: string | null;
   updated_at: string;
 };
 
@@ -175,6 +197,7 @@ export async function fetchEstimateDetail(
     { data: timeline },
     businessCase,
     requirements,
+    solutionArchitecture,
     wbsRows,
     wbsVersions,
     quoteRecord,
@@ -193,6 +216,7 @@ export async function fetchEstimateDetail(
       .order("created_at", { ascending: false }),
     ensureBusinessCaseRow(supabase, estimateId),
     ensureRequirementsRow(supabase, estimateId),
+    ensureSolutionArchitectureRow(supabase, estimateId),
     getWbsRows(supabase, estimateId),
     getWbsVersions(supabase, estimateId),
     ensureQuoteRecord(supabase, estimateId),
@@ -200,10 +224,24 @@ export async function fetchEstimateDetail(
     getQuoteOverrides(supabase, estimateId),
   ]);
 
+  // Fetch extracts for all artifacts
+  const artifactIds = artifacts?.map((a) => a.id) ?? [];
+  const { data: extracts } = artifactIds.length > 0
+    ? await supabase
+        .from("artifact_extracts")
+        .select("*")
+        .in("artifact_id", artifactIds)
+    : { data: null };
+
+  const extractMap = new Map(
+    extracts?.map((extract) => [extract.artifact_id, extract]) ?? [],
+  );
+
   const mappedArtifacts: ArtifactRecord[] =
     artifacts?.map((artifact) => ({
       ...artifact,
       public_url: getArtifactPublicUrl(supabase, artifact.storage_path),
+      extract: extractMap.get(artifact.id) ?? null,
     })) ?? [];
 
   return {
@@ -212,6 +250,7 @@ export async function fetchEstimateDetail(
     timeline: timeline ?? [],
     businessCase,
     requirements,
+    solutionArchitecture,
     effortEstimate: buildEffortEstimate(wbsRows, wbsVersions),
     quote: {
       record: quoteRecord,
@@ -286,6 +325,32 @@ async function ensureRequirementsRow(
   return inserted as RequirementsRecord;
 }
 
+async function ensureSolutionArchitectureRow(
+  supabase: SupabaseClient,
+  estimateId: string,
+): Promise<SolutionArchitectureRecord> {
+  const { data, error } = await supabase
+    .from("estimate_solution_architecture")
+    .select("id,estimate_id,content,approved,approved_by,updated_at")
+    .eq("estimate_id", estimateId)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  if (data) {
+    return data as SolutionArchitectureRecord;
+  }
+  const { data: inserted, error: insertError } = await supabase
+    .from("estimate_solution_architecture")
+    .insert({ estimate_id: estimateId })
+    .select("id,estimate_id,content,approved,approved_by,updated_at")
+    .single();
+  if (insertError) {
+    throw insertError;
+  }
+  return inserted as SolutionArchitectureRecord;
+}
+
 export async function upsertBusinessCase(
   supabase: SupabaseClient,
   estimateId: string,
@@ -342,6 +407,35 @@ export async function upsertRequirements(
     throw error;
   }
   return data as RequirementsRecord;
+}
+
+export async function upsertSolutionArchitecture(
+  supabase: SupabaseClient,
+  estimateId: string,
+  update: Partial<Pick<SolutionArchitectureRecord, "content" | "approved" | "approved_by">>,
+) {
+  const payload: Record<string, any> = {
+    updated_at: new Date().toISOString(),
+  };
+  if (update.content !== undefined) {
+    payload.content = update.content;
+  }
+  if (update.approved !== undefined) {
+    payload.approved = update.approved;
+  }
+  if (update.approved_by !== undefined) {
+    payload.approved_by = update.approved_by;
+  }
+  const { data, error } = await supabase
+    .from("estimate_solution_architecture")
+    .update(payload)
+    .eq("estimate_id", estimateId)
+    .select("*")
+    .single();
+  if (error) {
+    throw error;
+  }
+  return data as SolutionArchitectureRecord;
 }
 
 async function getWbsRows(

@@ -124,8 +124,11 @@ export function buildStageGateStatus(
   };
 
   // Solution/Architecture Stage
-  // For now, this stage is accessible after Requirements validated
-  // In the future, we might add structured fields
+  const solutionHasContent =
+    detail.solutionArchitecture?.content &&
+    extractPlainText(detail.solutionArchitecture.content).length > 0;
+  const solutionApproved = detail.solutionArchitecture?.approved ?? false;
+
   gates["Solution/Architecture"] = {
     stage: "Solution/Architecture",
     entryCriteria: [
@@ -139,12 +142,21 @@ export function buildStageGateStatus(
     ],
     readyToAdvance: [
       {
-        passed: true, // Placeholder - this stage might not have strict gates yet
-        message: "Ready to advance",
-        blocking: false,
+        passed: solutionHasContent,
+        message: solutionHasContent
+          ? "✓ Solution & Architecture documented"
+          : "Solution & Architecture needs to be generated or edited",
+        blocking: true,
+      },
+      {
+        passed: solutionApproved,
+        message: solutionApproved
+          ? "✓ Solution & Architecture approved"
+          : "Solution & Architecture needs approval",
+        blocking: true,
       },
     ],
-    canAdvance: true, // Placeholder
+    canAdvance: solutionHasContent && solutionApproved,
     canAccess: requirementsValidated,
   };
 

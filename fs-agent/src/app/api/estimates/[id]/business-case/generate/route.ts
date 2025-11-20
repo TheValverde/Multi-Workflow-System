@@ -10,15 +10,46 @@ function composeBusinessCase(detail: Awaited<ReturnType<typeof fetchEstimateDeta
   if (!detail) {
     return "<p>No project context available.</p>";
   }
-  const artifactItems = detail.artifacts.length
-    ? detail.artifacts
-        .slice(0, 5)
-        .map(
-          (artifact) =>
-            `<li><strong>${escapeHtml(artifact.filename)}</strong> · ${formatRelativeDate(artifact.created_at)}</li>`,
-        )
-        .join("")
-    : "<li>No supporting artifacts uploaded yet.</li>";
+
+  // Use extracted content from artifacts if available
+  const artifactsWithContent = detail.artifacts.filter(
+    (a) => a.extract?.extraction_status === "ready" && a.extract.content_text,
+  );
+  const artifactsWithoutContent = detail.artifacts.filter(
+    (a) => !a.extract || a.extract.extraction_status !== "ready",
+  );
+
+  let artifactItems = "";
+  if (artifactsWithContent.length > 0) {
+    artifactItems = artifactsWithContent
+      .slice(0, 5)
+      .map((artifact) => {
+        const extract = artifact.extract!;
+        // Use summary if available, otherwise clean and truncate content
+        const preview = extract.summary || 
+          cleanArtifactContent(extract.content_text || "")
+            .substring(0, 200)
+            .replace(/\n/g, " ")
+            .trim();
+        return `<li><strong>${escapeHtml(artifact.filename)}</strong> · ${formatRelativeDate(artifact.created_at)}<br><em>From ${escapeHtml(artifact.filename)}:</em> ${escapeHtml(preview)}${extract.content_text && extract.content_text.length > 200 ? "..." : ""}</li>`;
+      })
+      .join("");
+  }
+
+  if (artifactsWithoutContent.length > 0) {
+    const fallbackItems = artifactsWithoutContent
+      .slice(0, 5)
+      .map(
+        (artifact) =>
+          `<li><strong>${escapeHtml(artifact.filename)}</strong> · ${formatRelativeDate(artifact.created_at)} (extraction ${artifact.extract?.extraction_status || "pending"})</li>`,
+      )
+      .join("");
+    artifactItems += fallbackItems;
+  }
+
+  if (!artifactItems) {
+    artifactItems = "<li>No supporting artifacts uploaded yet.</li>";
+  }
 
   return [
     `<h3>Executive Summary</h3>`,
@@ -46,6 +77,41 @@ function escapeHtml(value: string) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+/**
+ * Clean artifact content by removing metadata, headers, and export info
+ */
+function cleanArtifactContent(content: string): string {
+  // Remove common markdown metadata patterns
+  let cleaned = content
+    // Remove export metadata (e.g., "_Exported on...")
+    .replace(/^_Exported on[^\n]*\n/gm, "")
+    // Remove file path references at start
+    .replace(/^#\s+.*\.md\s*$/gm, "")
+    // Remove "from Cursor" type metadata
+    .replace(/from Cursor[^\n]*/gi, "")
+    // Remove horizontal rules used as separators
+    .replace(/^---+\s*$/gm, "")
+    // Remove excessive whitespace
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // Find the first meaningful content (skip headers/metadata)
+  const lines = cleaned.split("\n");
+  let startIndex = 0;
+  
+  // Skip lines that look like metadata
+  for (let i = 0; i < Math.min(10, lines.length); i++) {
+    const line = lines[i].trim();
+    // Skip empty lines, export metadata, or very short header-only lines
+    if (line && !line.match(/^(Exported|from|#\s*$)/i) && line.length > 10) {
+      startIndex = i;
+      break;
+    }
+  }
+  
+  return lines.slice(startIndex).join("\n").trim();
 }
 
 export async function POST(

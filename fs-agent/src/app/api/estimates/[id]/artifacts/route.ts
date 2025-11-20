@@ -54,6 +54,8 @@ export async function POST(
     );
   }
 
+  const artifactIds: string[] = [];
+
   for (const file of files) {
     const arrayBuffer = await file.arrayBuffer();
     const filePath = `${estimateId}/${Date.now()}-${file.name}`;
@@ -71,7 +73,7 @@ export async function POST(
       );
     }
 
-    const { error: insertError } = await supabase
+    const { data: insertedArtifact, error: insertError } = await supabase
       .from("estimate_artifacts")
       .insert({
         estimate_id: estimateId,
@@ -79,13 +81,42 @@ export async function POST(
         storage_path: filePath,
         size_bytes: file.size,
         uploaded_by: uploadedBy,
-      });
+      })
+      .select("id")
+      .single();
 
     if (insertError) {
       return NextResponse.json(
         { error: insertError.message },
         { status: 500 },
       );
+    }
+
+    if (insertedArtifact) {
+      artifactIds.push(insertedArtifact.id);
+    }
+  }
+
+  // Trigger extraction for MD and DOCX files asynchronously
+  // Use a background task - don't block the response
+  for (let i = 0; i < artifactIds.length; i++) {
+    const artifactId = artifactIds[i];
+    const file = files[i];
+    if (!file) continue;
+
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext === "md" || ext === "docx") {
+      // Trigger extraction in background (don't await)
+      // Use the request URL to construct the base URL
+      const url = new URL(request.url);
+      const baseUrl = `${url.protocol}//${url.host}`;
+      fetch(`${baseUrl}/api/estimates/${estimateId}/artifacts/extract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ artifactId }),
+      }).catch((err) => {
+        console.error(`[Artifact Upload] Failed to trigger extraction for ${file.name}:`, err);
+      });
     }
   }
 

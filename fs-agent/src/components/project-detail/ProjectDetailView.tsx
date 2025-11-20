@@ -66,10 +66,13 @@ export default function ProjectDetailView({ estimateId }: Props) {
   const [notes, setNotes] = useState("");
   const [businessCaseDraft, setBusinessCaseDraft] = useState("");
   const [requirementsDraft, setRequirementsDraft] = useState("");
+  const [solutionArchitectureDraft, setSolutionArchitectureDraft] = useState("");
   const [businessCaseSaving, setBusinessCaseSaving] = useState(false);
   const [requirementsSaving, setRequirementsSaving] = useState(false);
+  const [solutionArchitectureSaving, setSolutionArchitectureSaving] = useState(false);
   const [businessCaseGenerating, setBusinessCaseGenerating] = useState(false);
   const [requirementsGenerating, setRequirementsGenerating] = useState(false);
+  const [solutionArchitectureGenerating, setSolutionArchitectureGenerating] = useState(false);
   const [quoteRates, setQuoteRates] = useState<EditableQuoteRate[]>([]);
   const [quoteOverrides, setQuoteOverrides] = useState<Record<string, number>>({});
   const [paymentTerms, setPaymentTerms] = useState("");
@@ -172,6 +175,11 @@ export default function ProjectDetailView({ estimateId }: Props) {
     if (!detail) return;
     setRequirementsDraft(detail.requirements.content ?? "");
   }, [detail?.requirements.content, detail]);
+
+  useEffect(() => {
+    if (!detail) return;
+    setSolutionArchitectureDraft(detail.solutionArchitecture.content ?? "");
+  }, [detail?.solutionArchitecture.content, detail]);
 
   const serverWbsRows = useMemo(
     () =>
@@ -326,6 +334,9 @@ export default function ProjectDetailView({ estimateId }: Props) {
   const requirementsDirty =
     detail?.requirements &&
     (requirementsDraft ?? "") !== (detail.requirements.content ?? "");
+  const solutionArchitectureDirty =
+    detail?.solutionArchitecture &&
+    (solutionArchitectureDraft ?? "") !== (detail.solutionArchitecture.content ?? "");
 
   const canApproveBusinessCase =
     extractPlainText(businessCaseDraft).length > 0 &&
@@ -337,8 +348,10 @@ export default function ProjectDetailView({ estimateId }: Props) {
   const applyDetail = useCallback((payload: EstimateDetail) => {
     // React Query will handle the state update
     invalidate();
-    setBusinessCaseDraft(payload.businessCase.content ?? "");
-    setRequirementsDraft(payload.requirements.content ?? "");
+      setBusinessCaseDraft(payload.businessCase.content ?? "");
+      setRequirementsDraft(payload.requirements.content ?? "");
+      setSolutionArchitectureDraft(payload.solutionArchitecture.content ?? "");
+      setSolutionArchitectureDraft(payload.solutionArchitecture.content ?? "");
   }, [invalidate]);
 
   const handleBusinessCaseGenerate = useCallback(
@@ -797,6 +810,66 @@ export default function ProjectDetailView({ estimateId }: Props) {
     [estimateId, requirementsDraft, applyDetail],
   );
 
+  const handleSolutionArchitectureGenerate = useCallback(
+    async (triggeredBy: string) => {
+      setSolutionArchitectureGenerating(true);
+      setActionError(null);
+      try {
+        const res = await fetch(
+          `/api/estimates/${estimateId}/solution-architecture/generate`,
+          { method: "POST" },
+        );
+        const payload = await res.json();
+        if (!res.ok) {
+          throw new Error(payload.error || "Unable to generate Solution & Architecture");
+        }
+        applyDetail(payload as EstimateDetail);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Generation failed";
+        setActionError(message);
+        if (triggeredBy === "copilot") {
+          throw new Error(message);
+        }
+      } finally {
+        setSolutionArchitectureGenerating(false);
+      }
+    },
+    [estimateId, applyDetail],
+  );
+
+  const handleSolutionArchitectureSave = useCallback(
+    async (options?: { approve?: boolean; notes?: string }) => {
+      setSolutionArchitectureSaving(true);
+      setActionError(null);
+      try {
+        const res = await fetch(`/api/estimates/${estimateId}/solution-architecture`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: solutionArchitectureDraft,
+            approved: options?.approve ?? false,
+            approved_by: options?.approve ? "User" : undefined,
+            notes: options?.notes,
+          }),
+        });
+        const payload = await res.json();
+        if (!res.ok) {
+          throw new Error(payload.error || "Unable to save Solution & Architecture");
+        }
+        applyDetail(payload as EstimateDetail);
+        if (options?.approve) {
+          setNotes("");
+        }
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Save failed");
+      } finally {
+        setSolutionArchitectureSaving(false);
+      }
+    },
+    [estimateId, solutionArchitectureDraft, applyDetail],
+  );
+
   useCopilotAction({
     name: "generateBusinessCase",
     description:
@@ -1221,14 +1294,27 @@ export default function ProjectDetailView({ estimateId }: Props) {
               {detail.estimate.stage === "Solution/Architecture" && (
                 <>
                   {stageGates["Solution/Architecture"]?.canAccess ? (
-                    <div className="space-y-4">
-                      <h2 className="text-xl font-semibold text-slate-900">
-                        Solution & Architecture
-                      </h2>
-                      <p className="text-sm text-slate-600">
-                        This stage will be enhanced in a future story with structured fields for approach, stack, and risks.
-                      </p>
-                    </div>
+                    <SolutionArchitecturePanel
+                      draft={solutionArchitectureDraft}
+                      approved={detail.solutionArchitecture.approved}
+                      updatedAt={detail.solutionArchitecture.updated_at}
+                      dirty={solutionArchitectureDirty}
+                      saving={solutionArchitectureSaving}
+                      generating={solutionArchitectureGenerating}
+                      canApprove={
+                        solutionArchitectureDraft.trim().length > 0 &&
+                        !detail.solutionArchitecture.approved
+                      }
+                      onChange={setSolutionArchitectureDraft}
+                      onGenerate={() => handleSolutionArchitectureGenerate("user")}
+                      onSave={() => handleSolutionArchitectureSave()}
+                      onApprove={() =>
+                        handleSolutionArchitectureSave({
+                          approve: true,
+                          notes: notes.trim() || undefined,
+                        })
+                      }
+                    />
                   ) : (
                     <LockedStagePanel
                       stageTitle="Solution/Architecture"
@@ -1434,6 +1520,98 @@ type RequirementsPanelProps = {
   onSave: () => void;
   onValidate: () => void;
 };
+
+type SolutionArchitecturePanelProps = {
+  draft: string;
+  approved: boolean;
+  updatedAt: string | null;
+  dirty: boolean;
+  saving: boolean;
+  generating: boolean;
+  canApprove: boolean;
+  onChange: (value: string) => void;
+  onGenerate: () => void;
+  onSave: () => void;
+  onApprove: () => void;
+};
+
+function SolutionArchitecturePanel({
+  draft,
+  approved,
+  updatedAt,
+  dirty,
+  saving,
+  generating,
+  canApprove,
+  onChange,
+  onGenerate,
+  onSave,
+  onApprove,
+}: SolutionArchitecturePanelProps) {
+  return (
+    <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">
+            Solution & Architecture
+          </h2>
+          <p className="text-sm text-slate-500">
+            {approved ? "Approved" : "Needs approval"} · Updated{" "}
+            {updatedAt
+              ? formatDistanceToNow(new Date(updatedAt), { addSuffix: true })
+              : "—"}
+          </p>
+        </div>
+        <span
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            approved
+              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+              : "bg-amber-50 text-amber-700 ring-1 ring-amber-100"
+          }`}
+        >
+          {approved ? "Approved" : "Pending review"}
+        </span>
+      </div>
+      <p className="mt-3 text-sm text-slate-500">
+        Document the proposed implementation approach, technical stack, and key risks. Generate with Copilot or write manually, then approve to unlock the Effort Estimate stage.
+      </p>
+      <div className="mt-4 space-y-3">
+        <div className="h-[500px]">
+          <DualPaneEditor
+            value={draft}
+            onChange={onChange}
+            templateType="business-case"
+            previewVisible={true}
+            onPreviewToggle={() => {}}
+          />
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={onGenerate}
+            disabled={generating}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {generating ? "Generating…" : "Generate with Copilot"}
+          </button>
+          <button
+            onClick={onSave}
+            disabled={!dirty || saving}
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving && !canApprove ? "Saving…" : "Save Draft"}
+          </button>
+          <button
+            onClick={onApprove}
+            disabled={!canApprove || saving}
+            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+          >
+            {saving && canApprove ? "Approving…" : "Approve Solution & Architecture"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function RequirementsPanel({
   draft,
@@ -2161,27 +2339,83 @@ function ArtifactsPanel({
         </label>
       </div>
       <ul className="mt-4 divide-y divide-slate-100">
-        {artifacts.map((artifact) => (
-          <li key={artifact.id} className="flex items-center justify-between py-3">
-            <div>
-              <p className="font-medium text-slate-900">{artifact.filename}</p>
-              <p className="text-xs text-slate-500">
-                Uploaded {formatDistanceToNow(new Date(artifact.created_at), { addSuffix: true })} ·{" "}
-                {artifact.size_bytes
-                  ? `${(artifact.size_bytes / 1024).toFixed(0)} KB`
-                  : "—"}
-              </p>
-            </div>
-            <a
-              href={artifact.public_url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm font-medium text-slate-700 underline"
-            >
-              View
-            </a>
-          </li>
-        ))}
+        {artifacts.map((artifact) => {
+          const extract = artifact.extract;
+          const ext = artifact.filename.split(".").pop()?.toLowerCase();
+          const isExtractable = ext === "md" || ext === "docx";
+          const status = extract?.extraction_status || (isExtractable ? "pending" : null);
+          
+          return (
+            <li key={artifact.id} className="flex items-center justify-between py-3">
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-slate-900">{artifact.filename}</p>
+                  {isExtractable && status && (
+                    <ExtractionStatusBadge status={status} />
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">
+                  Uploaded {formatDistanceToNow(new Date(artifact.created_at), { addSuffix: true })} ·{" "}
+                  {artifact.size_bytes
+                    ? `${(artifact.size_bytes / 1024).toFixed(0)} KB`
+                    : "—"}
+                  {extract?.extraction_status === "ready" && extract.content_text && (
+                    <span className="ml-2">· Text extracted</span>
+                  )}
+                </p>
+                {extract?.extraction_status === "ready" && extract.summary && (
+                  <p className="mt-1 text-xs text-slate-600 line-clamp-2">
+                    {extract.summary}
+                  </p>
+                )}
+                {extract?.extraction_status === "failed" && extract.error_message && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    Error: {extract.error_message}
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {extract?.extraction_status === "failed" && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(
+                          `/api/estimates/${estimateId}/artifacts/extract`,
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ artifactId: artifact.id }),
+                          },
+                        );
+                        if (res.ok) {
+                          // Refresh the detail to show updated status
+                          const detailRes = await fetch(`/api/estimates/${estimateId}`);
+                          if (detailRes.ok) {
+                            const detail = await detailRes.json();
+                            applyDetail(detail);
+                          }
+                        }
+                      } catch (err) {
+                        console.error("Failed to retry extraction:", err);
+                      }
+                    }}
+                    className="text-xs font-medium text-slate-700 underline hover:text-slate-900"
+                  >
+                    Retry
+                  </button>
+                )}
+                <a
+                  href={artifact.public_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm font-medium text-slate-700 underline"
+                >
+                  View
+                </a>
+              </div>
+            </li>
+          );
+        })}
         {artifacts.length === 0 && (
           <li className="py-4 text-sm text-slate-500">
             No artifacts uploaded yet.
@@ -2236,6 +2470,30 @@ const PAYMENT_TERMS_OPTIONS = [
   { value: "Net 60", label: "Net 60" },
   { value: "Custom", label: "Custom..." },
 ];
+
+function ExtractionStatusBadge({ status }: { status: string }) {
+  const styles = {
+    pending: "bg-slate-100 text-slate-600",
+    processing: "bg-amber-100 text-amber-700",
+    ready: "bg-emerald-100 text-emerald-700",
+    failed: "bg-rose-100 text-rose-700",
+  };
+  
+  const labels = {
+    pending: "Pending",
+    processing: "Processing",
+    ready: "Ready",
+    failed: "Failed",
+  };
+  
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${styles[status as keyof typeof styles] || styles.pending}`}
+    >
+      {labels[status as keyof typeof labels] || status}
+    </span>
+  );
+}
 
 function PaymentTermsSelector({
   value,
