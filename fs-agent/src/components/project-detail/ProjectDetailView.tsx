@@ -870,6 +870,31 @@ export default function ProjectDetailView({ estimateId }: Props) {
     [estimateId, solutionArchitectureDraft, applyDetail],
   );
 
+  const handleStageChange = useCallback(
+    async (stage: string) => {
+      setActionError(null);
+      try {
+        const res = await fetch(`/api/estimates/${estimateId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "changeStage",
+            stage: stage,
+            actor: "User",
+          }),
+        });
+        const payload = await res.json();
+        if (!res.ok) {
+          throw new Error(payload.error || "Unable to change stage");
+        }
+        applyDetail(payload as EstimateDetail);
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Failed to change stage");
+      }
+    },
+    [estimateId, applyDetail],
+  );
+
   useCopilotAction({
     name: "generateBusinessCase",
     description:
@@ -1158,6 +1183,7 @@ export default function ProjectDetailView({ estimateId }: Props) {
               currentStage={detail?.estimate.stage ?? ""}
               gates={stageGates}
               detail={detail}
+              onStageClick={handleStageChange}
             />
           </div>
           {detail && (

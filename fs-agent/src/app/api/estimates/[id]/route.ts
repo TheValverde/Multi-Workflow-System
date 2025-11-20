@@ -32,7 +32,8 @@ export async function GET(
 }
 
 type PatchBody = {
-  action: "approve" | "advance";
+  action: "approve" | "advance" | "changeStage";
+  stage?: StageKey;
   notes?: string;
   actor?: string;
 };
@@ -56,6 +57,72 @@ export async function PATCH(
       { error: "Action is required" },
       { status: 400 },
     );
+  }
+
+  // Handle stage change (navigate to any accessible stage)
+  if (body.action === "changeStage") {
+    if (!body.stage) {
+      return NextResponse.json(
+        { error: "Stage is required for changeStage action" },
+        { status: 400 },
+      );
+    }
+
+    // Validate that the target stage is accessible (not locked)
+    const targetIndex = STAGE_ORDER.indexOf(body.stage);
+    const currentIndex = STAGE_ORDER.indexOf(detail.estimate.stage);
+    
+    if (targetIndex === -1) {
+      return NextResponse.json(
+        { error: "Invalid stage" },
+        { status: 400 },
+      );
+    }
+
+    // Allow changing to any stage that's been reached (not future stages)
+    if (targetIndex > currentIndex) {
+      return NextResponse.json(
+        { error: "Cannot navigate to a future stage. Please advance through stages in order." },
+        { status: 400 },
+      );
+    }
+
+    // Update the stage
+    const { error: updateError } = await supabase
+      .from("estimates")
+      .update({
+        stage: body.stage,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", estimateId);
+
+    if (updateError) {
+      return NextResponse.json(
+        { error: updateError.message },
+        { status: 500 },
+      );
+    }
+
+    // Log the stage change
+    const { error: timelineError } = await supabase
+      .from("estimate_timeline")
+      .insert({
+        estimate_id: estimateId,
+        stage: body.stage,
+        action: `Navigated to ${body.stage}`,
+        actor: actor,
+        notes: body.notes ?? null,
+      });
+
+    if (timelineError) {
+      return NextResponse.json(
+        { error: timelineError.message },
+        { status: 500 },
+      );
+    }
+
+    const updatedDetail = await fetchEstimateDetail(supabase, estimateId);
+    return NextResponse.json(updatedDetail, { status: 200 });
   }
 
   if (body.action === "advance" && isFinalStage(detail.estimate.stage)) {

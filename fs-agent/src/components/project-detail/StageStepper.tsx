@@ -8,9 +8,10 @@ type Props = {
   currentStage: string;
   gates: StageGates;
   detail: EstimateDetail | null;
+  onStageClick?: (stage: string) => void;
 };
 
-export default function StageStepper({ currentStage, gates, detail }: Props) {
+export default function StageStepper({ currentStage, gates, detail, onStageClick }: Props) {
   const currentIndex = getStageIndex(currentStage);
 
   return (
@@ -24,14 +25,19 @@ export default function StageStepper({ currentStage, gates, detail }: Props) {
           const isLocked = index > currentIndex;
           const canAccess = stageGates?.canAccess ?? false;
 
+          const isClickable = isCompleted && onStageClick && canAccess;
+          
           return (
             <div
               key={stage.key}
+              onClick={isClickable ? () => onStageClick(stage.key) : undefined}
               className={`rounded-xl border-2 p-4 transition ${
                 isCurrent
                   ? "border-blue-500 bg-blue-50"
                   : isCompleted
-                    ? "border-green-200 bg-green-50"
+                    ? isClickable
+                      ? "border-green-200 bg-green-50 cursor-pointer hover:border-green-300 hover:bg-green-100"
+                      : "border-green-200 bg-green-50"
                     : isLocked
                       ? "border-slate-200 bg-slate-50 opacity-60"
                       : "border-slate-200 bg-white"
@@ -57,6 +63,11 @@ export default function StageStepper({ currentStage, gates, detail }: Props) {
                     {isCurrent && (
                       <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs font-medium text-white">
                         Current
+                      </span>
+                    )}
+                    {isCompleted && isClickable && (
+                      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                        Click to edit
                       </span>
                     )}
                   </div>
