@@ -30,6 +30,13 @@ export default function AgreementDetailView({
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [noteText, setNoteText] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  const [estimates, setEstimates] = useState<Array<{ id: string; name: string; stage: string }>>([]);
+  const [linkingEstimate, setLinkingEstimate] = useState(false);
+  const [validationResult, setValidationResult] = useState<any>(null);
+  const [validating, setValidating] = useState(false);
+  const [markingReady, setMarkingReady] = useState(false);
+  const [overrideRationale, setOverrideRationale] = useState("");
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
   const router = useRouter();
 
   const { state, setState } = useCoAgent<AgentState>({
@@ -62,6 +69,20 @@ export default function AgreementDetailView({
   useEffect(() => {
     loadAgreement();
   }, [loadAgreement]);
+
+  useEffect(() => {
+    // Load estimates for selector
+    fetch("/api/estimates")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.data && Array.isArray(data.data)) {
+          setEstimates(data.data);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load estimates:", err);
+      });
+  }, []);
 
   useEffect(() => {
     if (agreement) {
@@ -139,6 +160,91 @@ export default function AgreementDetailView({
     }
   };
 
+  const handleLinkEstimate = async (estimateId: string | null) => {
+    if (!agreement) return;
+    setLinkingEstimate(true);
+    try {
+      const res = await fetch(`/api/contracts/${agreement.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ linked_estimate_id: estimateId }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to link estimate");
+      }
+      await loadAgreement();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to link estimate");
+    } finally {
+      setLinkingEstimate(false);
+    }
+  };
+
+  const handleValidate = async () => {
+    if (!agreement) return;
+    setValidating(true);
+    try {
+      const res = await fetch(`/api/contracts/${agreement.id}/validate`);
+      if (!res.ok) {
+        throw new Error("Failed to validate");
+      }
+      const result = await res.json();
+      setValidationResult(result);
+      
+      // Log validation to notes
+      if (result.summary) {
+        await fetch(`/api/contracts/${agreement.id}/notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            note_text: `Validation: ${result.summary} (${result.discrepancies?.length || 0} discrepancies)`,
+          }),
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to validate");
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const handleMarkReadyForSignature = async () => {
+    if (!agreement) return;
+    
+    // For SOWs, check validation
+    if (agreement.type === "SOW" && agreement.linked_estimate_id) {
+      // If not validated or has errors, require override
+      if (!validationResult || !validationResult.valid) {
+        if (!overrideRationale.trim()) {
+          setShowOverrideModal(true);
+          return;
+        }
+      }
+    }
+
+    setMarkingReady(true);
+    try {
+      const res = await fetch(`/api/contracts/${agreement.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ready_for_signature: true,
+          signature_override_rationale: overrideRationale.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to mark ready");
+      }
+      await loadAgreement();
+      setShowOverrideModal(false);
+      setOverrideRationale("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to mark ready");
+    } finally {
+      setMarkingReady(false);
+    }
+  };
+
   const handleViewVersion = (version: AgreementVersion) => {
     setContent(version.content);
     setSelectedVersion(version.version_number);
@@ -188,6 +294,31 @@ export default function AgreementDetailView({
         return `Proposals ${proposalIds.join(", ")} will be applied.`;
       } catch (err) {
         return `Failed to apply proposals: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  });
+
+  useCopilotAction({
+    name: "validate_against_estimate",
+    description: "Validate the SOW against the linked estimate and post summary to notes.",
+    handler: async () => {
+      if (!agreement) {
+        return "No agreement loaded.";
+      }
+      if (agreement.type !== "SOW") {
+        return "Validation is only available for SOW agreements.";
+      }
+      if (!agreement.linked_estimate_id) {
+        return "No estimate linked to this SOW. Please link an estimate first.";
+      }
+      try {
+        await handleValidate();
+        if (validationResult) {
+          return validationResult.summary;
+        }
+        return "Validation completed. Check the validation results panel.";
+      } catch (err) {
+        return `Failed to validate: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
   });
@@ -245,6 +376,15 @@ export default function AgreementDetailView({
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
+              {agreement.type === "SOW" && agreement.linked_estimate_id && (
+                <button
+                  onClick={handleValidate}
+                  disabled={validating}
+                  className="rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                >
+                  {validating ? "Validating…" : "Validate Against Estimate"}
+                </button>
+              )}
               <button
                 onClick={() => router.push(`/contracts/${agreement.id}/review`)}
                 className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -265,6 +405,20 @@ export default function AgreementDetailView({
               >
                 Create Version
               </button>
+              {agreement.type === "SOW" && !agreement.ready_for_signature && (
+                <button
+                  onClick={handleMarkReadyForSignature}
+                  disabled={markingReady}
+                  className="rounded-full bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700 disabled:opacity-50"
+                >
+                  {markingReady ? "Marking…" : "Mark Ready for Signature"}
+                </button>
+              )}
+              {agreement.ready_for_signature && (
+                <span className="rounded-full bg-green-100 px-4 py-2 text-sm font-semibold text-green-700">
+                  ✓ Ready for Signature
+                </span>
+              )}
             </div>
           </div>
           {error && (
@@ -285,6 +439,105 @@ export default function AgreementDetailView({
           </section>
 
           <aside className="space-y-6">
+            <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+              <h3 className="mb-4 text-lg font-semibold text-slate-900">
+                {agreement.type === "SOW" ? "Link Estimate" : "Estimate Link"}
+              </h3>
+              {agreement.type === "SOW" ? (
+                <>
+                  {estimates.length === 0 ? (
+                    <p className="text-sm text-slate-500">
+                      Loading estimates…
+                    </p>
+                  ) : (
+                    <>
+                      <select
+                        value={agreement.linked_estimate_id || ""}
+                        onChange={(e) => handleLinkEstimate(e.target.value || null)}
+                        disabled={linkingEstimate}
+                        className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                      >
+                        <option value="">Select an estimate…</option>
+                        {estimates.map((est) => (
+                          <option key={est.id} value={est.id}>
+                            {est.name} ({est.stage})
+                          </option>
+                        ))}
+                      </select>
+                      {agreement.linked_estimate && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Linked to: {agreement.linked_estimate.name}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">
+                  Estimate linking is only available for SOW agreements. This is a {agreement.type}.
+                </p>
+              )}
+            </div>
+
+            {validationResult && (
+              <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+                <h3 className="mb-4 text-lg font-semibold text-slate-900">
+                  Validation Results
+                </h3>
+                <div className={`mb-3 rounded-2xl p-3 ${
+                  validationResult.valid
+                    ? "bg-green-50 border border-green-200"
+                    : "bg-rose-50 border border-rose-200"
+                }`}>
+                  <p className={`text-sm font-semibold ${
+                    validationResult.valid ? "text-green-900" : "text-rose-900"
+                  }`}>
+                    {validationResult.valid ? "✓ Valid" : "✗ Issues Found"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {validationResult.summary}
+                  </p>
+                </div>
+                {validationResult.discrepancies?.length > 0 && (
+                  <div className="space-y-2">
+                    {validationResult.discrepancies.map((disc: any) => (
+                      <div
+                        key={disc.id}
+                        className={`rounded-xl border p-3 text-sm ${
+                          disc.severity === "error"
+                            ? "border-rose-200 bg-rose-50"
+                            : disc.severity === "warning"
+                              ? "border-yellow-200 bg-yellow-50"
+                              : "border-blue-200 bg-blue-50"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <span className={`text-xs font-semibold uppercase ${
+                            disc.severity === "error"
+                              ? "text-rose-700"
+                              : disc.severity === "warning"
+                                ? "text-yellow-700"
+                                : "text-blue-700"
+                          }`}>
+                            {disc.severity}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            {disc.category}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-slate-900">{disc.message}</p>
+                        {disc.reference && (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Reference: {disc.reference}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
               <h3 className="mb-4 text-lg font-semibold text-slate-900">
                 Version Timeline
@@ -373,6 +626,44 @@ export default function AgreementDetailView({
           </aside>
         </div>
       </div>
+
+      {showOverrideModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-xl font-semibold text-slate-900">
+              Override Validation
+            </h3>
+            <p className="mb-4 text-sm text-slate-600">
+              This SOW has validation discrepancies. Please provide a rationale for
+              marking it ready for signature despite the issues.
+            </p>
+            <textarea
+              value={overrideRationale}
+              onChange={(e) => setOverrideRationale(e.target.value)}
+              placeholder="Explain why this SOW can be signed despite the discrepancies..."
+              className="mb-4 min-h-[100px] w-full rounded-2xl border border-slate-200 p-3 text-sm"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowOverrideModal(false);
+                  setOverrideRationale("");
+                }}
+                className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMarkReadyForSignature}
+                disabled={markingReady || !overrideRationale.trim()}
+                className="rounded-full bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+              >
+                {markingReady ? "Marking…" : "Mark Ready"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

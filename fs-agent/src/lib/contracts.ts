@@ -9,6 +9,8 @@ export type AgreementRecord = {
   content: string;
   current_version: number;
   linked_estimate_id: string | null;
+  ready_for_signature: boolean;
+  signature_override_rationale: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -49,13 +51,17 @@ export type AgreementDetail = AgreementRecord & {
     name: string;
     stage: string;
   } | null;
+  ready_for_signature?: boolean;
+  signature_override_rationale?: string | null;
 };
 
 export type AgreementPayload = {
-  type: AgreementType;
-  counterparty: string;
+  type?: AgreementType;
+  counterparty?: string;
   content?: string;
   linked_estimate_id?: string | null;
+  ready_for_signature?: boolean;
+  signature_override_rationale?: string | null;
 };
 
 export type ReviewProposal = {
@@ -76,6 +82,26 @@ export type VersionPayload = {
   notes?: string;
   created_by?: string;
   proposals_applied?: string[]; // IDs of accepted proposals
+};
+
+export type DiscrepancySeverity = "error" | "warning" | "info";
+
+export type Discrepancy = {
+  id: string;
+  category: "scope" | "hours" | "payment_terms" | "rates" | "timeline";
+  severity: DiscrepancySeverity;
+  message: string;
+  reference?: string; // Reference to offending clause/task
+  expected?: string;
+  actual?: string;
+};
+
+export type ValidationResult = {
+  valid: boolean;
+  discrepancies: Discrepancy[];
+  summary: string;
+  validated_at: string;
+  validated_by?: string;
 };
 
 export async function fetchAgreements(
@@ -193,6 +219,12 @@ export async function updateAgreement(
   }
   if (payload.linked_estimate_id !== undefined) {
     updateData.linked_estimate_id = payload.linked_estimate_id;
+  }
+  if (payload.ready_for_signature !== undefined) {
+    updateData.ready_for_signature = payload.ready_for_signature;
+  }
+  if (payload.signature_override_rationale !== undefined) {
+    updateData.signature_override_rationale = payload.signature_override_rationale;
   }
 
   const { data, error } = await supabase
