@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const ARTIFACT_BUCKET = "estimate-artifacts";
 export const POLICY_EXEMPLAR_BUCKET = "policy-exemplars";
+export const CONTRACT_DRAFTS_BUCKET = "contract-drafts";
 
 export function getArtifactPublicUrl(
   supabase: SupabaseClient,

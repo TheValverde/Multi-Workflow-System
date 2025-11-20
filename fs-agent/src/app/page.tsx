@@ -44,6 +44,12 @@ export default function CopilotKitPage() {
             >
               Manage Policies
             </Link>
+            <Link
+              href="/contracts"
+              className="rounded-full bg-white/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-white ring-1 ring-white/30 transition hover:bg-white/20"
+            >
+              Agreements
+            </Link>
           </div>
         </div>
       </div>
