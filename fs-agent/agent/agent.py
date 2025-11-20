@@ -186,6 +186,42 @@ def fetch_quote_overrides(estimate_id: str):
         return []
 
 
+def fetch_exemplar_contracts(exemplar_type: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return []
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/contract_exemplars",
+            params={
+                "select": "id,title,type,summary,storage_path,tags,uploaded_by,created_at",
+                "type": f"eq.{exemplar_type}",
+                "order": "created_at.desc",
+                "limit": 10,
+            },
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        for exemplar in data:
+            exemplar["public_url"] = (
+                f"{SUPABASE_URL}/storage/v1/object/public/"
+                f"policy-exemplars/{exemplar['storage_path']}"
+            )
+        return data
+    except Exception as exc:
+        return [
+            {
+                "title": "Unable to load exemplars",
+                "type": exemplar_type,
+                "summary": str(exc),
+            }
+        ]
+
+
 def summarize_from_artifacts(artifacts, intro: str, outro: str):
     if artifacts and "error" in artifacts[0]:
         return f"{intro}\n\n- {artifacts[0]['error']}"
@@ -417,11 +453,25 @@ def get_project_total(estimate_id: str):
         "lines": lines,
     }
 
+
+@tool
+def load_exemplar_contracts(contract_type: str):
+    """
+    Load exemplar agreements (MSA, SOW, NDA, etc.) for use in contract drafting/reviews.
+    """
+    exemplars = fetch_exemplar_contracts(contract_type)
+    return {
+        "type": contract_type,
+        "count": len(exemplars),
+        "exemplars": exemplars,
+    }
+
 backend_tools = [
     summarize_business_case,
     summarize_requirements,
     generate_wbs,
     get_project_total,
+    load_exemplar_contracts,
 ]
 
 # Extract tool names from backend_tools for comparison

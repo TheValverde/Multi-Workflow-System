@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
+    "seed:policies": "node scripts/seed-policies.mjs",
     "install:agent": "sh ./scripts/setup-agent.sh || scripts\\setup-agent.bat",
     "postinstall": "npm run install:agent"
   },

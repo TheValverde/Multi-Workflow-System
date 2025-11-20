@@ -486,3 +486,9 @@ This story successfully established the foundation for the entire project:
 - **2025-11-19 18:40 UTC** — Implemented Quote UI (rate table, overrides, payment terms, delivery toggle, export/copy) plus Copilot `getProjectTotal` action.
 - **2025-11-19 19:00 UTC** — Added LangGraph `get_project_total` tool, extended stage-estimate payload, and documented/testing updates (Vitest + DEV_NOTES).
 
+## STORY-007 — Policy Management & Exemplar Library
+
+- **2025-11-19 20:10 UTC** — Created Supabase policy/exemplar tables + join table, storage bucket `policy-exemplars`, and seeding script `pnpm seed:policies`.
+- **2025-11-19 20:35 UTC** — Delivered `/policies` page with stats, CRUD modals, exemplar upload workflow, Copilot actions, and REST APIs (`/api/policies`, `/api/policies/exemplars`, `/api/policies/summary`).
+- **2025-11-19 20:55 UTC** — Added LangGraph `load_exemplar_contracts` tool, documentation updates (README/DEV_NOTES), and Vitest coverage for policy helpers.
+

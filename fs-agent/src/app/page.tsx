@@ -38,6 +38,12 @@ export default function CopilotKitPage() {
             >
               Open Estimates List
             </Link>
+            <Link
+              href="/policies"
+              className="rounded-full bg-white/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-white ring-1 ring-white/30 transition hover:bg-white/20"
+            >
+              Manage Policies
+            </Link>
           </div>
         </div>
       </div>

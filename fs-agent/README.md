@@ -404,6 +404,18 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 - [Supabase](https://supabase.com) — Backend as a Service
 - [uv](https://github.com/astral-sh/uv) — Fast Python package manager
 
+## Story 7 — Policy Management & Exemplars
+
+- Supabase schema now includes `contract_policies`, `contract_exemplars`, and `contract_policy_exemplars`, plus a **public** `policy-exemplars` storage bucket for uploaded reference agreements.
+- `/policies` introduces CRUD modals, exemplar uploads, summary stats, and Copilot actions (`createPolicyRule`, `listPolicies`) so the contracts workflow has a living knowledge base.
+- APIs: `GET/POST /api/policies`, `GET/PATCH/DELETE /api/policies/:id`, `GET/POST /api/policies/exemplars`, and `GET /api/policies/summary`.
+- LangGraph tool `load_exemplar_contracts(type)` lets the agent pull MSAs/SOWs/NDAs on demand.
+- Seeding workflow:
+  1. Create `RAW_TEXT/policies.json` with `{ title, category, summary, body, tags }` entries.
+  2. Drop exemplar files into `RAW_TEXT/exemplars/<TYPE>/your-file.md`.
+  3. Ensure `policy-exemplars` bucket exists (public) and `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are set locally.
+  4. Run `pnpm seed:policies` to push both policies and exemplars into Supabase.
+
 ---
 
 **Built with ❤️ for the future of agentic applications**

@@ -205,6 +205,34 @@ The integration uses the **AG-UI** pattern from CopilotKit with LangGraph:
 - Introduced `vitest` config + `pnpm test`.
 - `src/lib/__tests__/stageEstimate.test.ts` verifies stage-estimate payload shape + WBS generator invariants (≥5 tasks, artifact references).
 
+## STORY-007 — Policy Management & Exemplars
+
+### Data model
+
+- `contract_policies`, `contract_exemplars`, `contract_policy_exemplars` tables plus the **public** `policy-exemplars` storage bucket hold policy rules and reference agreements.
+- `scripts/seed-policies.mjs` ingests `RAW_TEXT/policies.json` + `RAW_TEXT/exemplars/<TYPE>/*` using Supabase REST + Storage APIs (`pnpm seed:policies`).
+
+### APIs
+
+- `GET/POST /api/policies`, `GET/PATCH/DELETE /api/policies/:id` handle CRUD with duplicate-title protection and exemplar association syncing.
+- `GET/POST /api/policies/exemplars` uploads files to storage and stores metadata; `GET /api/policies/summary` feeds dashboard metrics.
+- New `src/lib/policies.ts` centralizes policy/exemplar queries, tag normalization, and summary helpers.
+
+### Frontend
+
+- `/policies` page provides stats, policy table with modals, exemplar upload form, and Copilot actions (`createPolicyRule`, `listPolicies`).
+- UI surfaces per-policy exemplar associations, tag chips, and upload metadata; errors bubble through toast-style banners.
+
+### Agent tooling
+
+- Python agent exposes `load_exemplar_contracts(type)` so downstream stories (contract drafting/review) can read stored exemplars. Results include public URLs built from the `policy-exemplars` bucket.
+- Existing Copilot toolbar remains available from the Policies page, enabling conversational CRUD.
+
+### Docs & testing
+
+- README + AI_ARTIFACTS capture Story-007 deliverables and seeding instructions (including bucket requirements).
+- Added `src/lib/__tests__/policies.test.ts` to cover `normalizeTags`.
+
 ## STORY-006 — Quote Stage Export & Delivery Flag
 
 ### Data model
