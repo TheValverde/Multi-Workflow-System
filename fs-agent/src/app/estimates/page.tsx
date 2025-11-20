@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useCoAgent } from "@copilotkit/react-core";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
+import { Plus } from "lucide-react";
 
 type Stage =
   | "Artifacts"
@@ -176,6 +177,13 @@ export default function EstimatesPage() {
                 view.
               </p>
             </div>
+            <button
+              onClick={() => router.push("/estimates/new")}
+              className="flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              <Plus className="h-4 w-4" />
+              New Estimate
+            </button>
           </div>
         </header>
 
