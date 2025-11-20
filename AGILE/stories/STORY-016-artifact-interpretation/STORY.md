@@ -15,9 +15,9 @@ Give the LLMs real visibility into uploaded artifacts by extracting text/vision 
      - PDF/DOCX/MD/TXT → use server-side parsers to produce normalized Markdown/HTML.
    - Store extracted content in a new `artifact_extracts` table (`artifact_id`, `content_html`, `content_text`, `summary`, `extraction_status`, `extracted_at`).
 2. **LLM Integration**
-   - `summarize_business_case`, `summarize_requirements`, `generate_wbs`, and `create_agreements_from_estimate` must pull from `artifact_extracts` (fallback to filename only if extraction failed).
-   - Agreement drafting prompts should feed the actual extracted text (plus policy/exemplar context) so the generated document mirrors professional structure (headings, clauses) rather than a loose markdown list.
-   - Copilot actions should quote snippets of artifact content, not just list filenames.*** End Patch*** End Patch
+   - `summarize_business_case`, `summarize_requirements`, and `generate_wbs` must pull from `artifact_extracts` (fallback to filename only if extraction failed).
+   - Business Case and Requirements generation prompts should feed the actual extracted text so the generated content references specific details from artifacts (e.g., "From Wireframe.png: the header includes a CTA button...").
+   - Copilot actions should quote snippets of artifact content, not just list filenames.
 3. **UI Surfacing**
    - Artifact list shows extraction status (Pending / Processing / Ready / Failed) with retry option.
    - Hovering an artifact shows a quick preview (first 300 chars or thumbnail for images).
