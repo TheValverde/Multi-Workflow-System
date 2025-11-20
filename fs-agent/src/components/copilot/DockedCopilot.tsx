@@ -2,7 +2,7 @@
 
 import { useCoAgent } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { usePathname } from "next/navigation";
 
 type DockedCopilotState = {
@@ -14,25 +14,10 @@ type DockedCopilotState = {
 
 export function DockedCopilot() {
   const pathname = usePathname();
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const { state, setState } = useCoAgent<DockedCopilotState>({
     name: "sample_agent",
     initialState: {},
   });
-
-  // Check viewport width for auto-collapse
-  useEffect(() => {
-    const checkViewport = () => {
-      if (window.innerWidth < 1400 && !isCollapsed) {
-        setIsCollapsed(true);
-      } else if (window.innerWidth >= 1400 && isCollapsed) {
-        setIsCollapsed(false);
-      }
-    };
-    checkViewport();
-    window.addEventListener("resize", checkViewport);
-    return () => window.removeEventListener("resize", checkViewport);
-  }, [isCollapsed]);
 
   // Derive workflow and entity from pathname
   const context = useMemo(() => {
@@ -92,6 +77,82 @@ export function DockedCopilot() {
     }
   }, [context.workflow, context.entity_id, context.entity_type, state, setState]);
 
+  // Aggressively hide close button immediately on mount and continuously
+  useEffect(() => {
+    const hideCloseButton = () => {
+      // More aggressive selectors to catch all possible close buttons
+      const selectors = [
+        'button[aria-label*="close" i]',
+        'button[aria-label*="Close" i]',
+        '[class*="close"]',
+        '[class*="Close"]',
+        '[class*="copilot-sidebar-close"]',
+        '[class*="CopilotSidebar-close"]',
+        '[class*="copilot-close"]',
+        'svg[class*="close"]',
+        'svg + button', // Button after close icon
+      ];
+      
+      selectors.forEach((selector) => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach((el) => {
+            const htmlEl = el as HTMLElement;
+            // Check if it's actually a close button (has close-related text/aria-label)
+            const ariaLabel = htmlEl.getAttribute('aria-label')?.toLowerCase() || '';
+            const className = htmlEl.className?.toLowerCase() || '';
+            const textContent = htmlEl.textContent?.toLowerCase() || '';
+            
+            if (
+              ariaLabel.includes('close') ||
+              className.includes('close') ||
+              (textContent.includes('close') && htmlEl.tagName === 'BUTTON')
+            ) {
+              htmlEl.style.display = 'none';
+              htmlEl.style.visibility = 'hidden';
+              htmlEl.style.opacity = '0';
+              htmlEl.style.pointerEvents = 'none';
+              htmlEl.style.position = 'absolute';
+              htmlEl.style.left = '-9999px';
+              htmlEl.remove(); // Actually remove it from DOM
+            }
+          });
+        } catch (e) {
+          // Ignore selector errors
+        }
+      });
+    };
+
+    // Run immediately
+    hideCloseButton();
+    
+    // Run on next tick to catch anything that renders after
+    setTimeout(hideCloseButton, 0);
+    setTimeout(hideCloseButton, 10);
+    setTimeout(hideCloseButton, 50);
+    setTimeout(hideCloseButton, 100);
+
+    // Watch for any new elements
+    const observer = new MutationObserver(() => {
+      hideCloseButton();
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'aria-label'],
+    });
+
+    // Aggressive periodic check
+    const interval = setInterval(hideCloseButton, 100);
+
+    return () => {
+      observer.disconnect();
+      clearInterval(interval);
+    };
+  }, []);
+
   // Build initial message based on context
   const initialMessage = useMemo(() => {
     if (context.workflow === "estimates") {
@@ -117,71 +178,28 @@ export function DockedCopilot() {
     return "AI Assistant";
   }, [context]);
 
-  const dockWidth = isCollapsed ? 60 : 320;
-
   return (
     <div
-      className="fixed right-0 top-0 hidden h-screen border-l border-slate-200 bg-white shadow-lg transition-all duration-300 lg:block"
-      style={{ width: `${dockWidth}px`, zIndex: 1000 }}
+      className="fixed right-0 top-0 hidden h-screen w-[320px] border-l border-slate-200 bg-white shadow-lg lg:block"
+      style={{ zIndex: 1000 }}
     >
-      {isCollapsed ? (
-        <button
-          onClick={() => setIsCollapsed(false)}
-          className="flex h-full w-full items-center justify-center text-slate-400 hover:text-slate-600"
-          title="Expand Copilot"
-        >
-          <svg
-            className="h-6 w-6 rotate-180"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 5l7 7-7 7"
-            />
-          </svg>
-        </button>
-      ) : (
-        <div className="flex h-full flex-col">
-          <div className="flex items-center justify-between border-b border-slate-200 p-3">
-            <h2 className="text-sm font-semibold text-slate-900">
-              {sidebarTitle}
-            </h2>
-            <button
-              onClick={() => setIsCollapsed(true)}
-              className="text-slate-400 hover:text-slate-600"
-              title="Collapse Copilot"
-            >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
-            </button>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <CopilotSidebar
-              clickOutsideToClose={false}
-              defaultOpen={true}
-              labels={{
-                title: sidebarTitle,
-                initial: initialMessage,
-              }}
-            />
-          </div>
+      <div className="flex h-full flex-col">
+        <div className="flex items-center border-b border-slate-200 p-3">
+          <h2 className="text-sm font-semibold text-slate-900">
+            {sidebarTitle}
+          </h2>
         </div>
-      )}
+        <div className="flex-1 overflow-hidden">
+          <CopilotSidebar
+            clickOutsideToClose={false}
+            defaultOpen={true}
+            labels={{
+              title: sidebarTitle,
+              initial: initialMessage,
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

@@ -76,3 +76,36 @@ html {
     widows: 3;
   }
 }
+
+/* Hide CopilotKit sidebar close button and ensure it's always open - loaded early to prevent flash */
+button[aria-label*="close" i],
+button[aria-label*="Close" i],
+button[aria-label*="close sidebar" i],
+button[aria-label*="Close sidebar" i],
+[class*="close"],
+[class*="Close"],
+[class*="copilot-sidebar-close"],
+[class*="CopilotSidebar-close"],
+[class*="copilot-close-button"],
+[data-copilot-sidebar] button[aria-label*="close" i],
+[data-copilot-sidebar] button[aria-label*="Close" i],
+[data-copilot-sidebar] [class*="close"],
+[data-copilot-sidebar] [class*="Close"],
+[data-copilot-sidebar] button[aria-label*="close sidebar" i],
+[data-copilot-sidebar] button[aria-label*="Close sidebar" i] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  left: -9999px !important;
+}
+
+/* Ensure CopilotKit sidebar is always visible */
+[data-copilot-sidebar],
+[class*="copilot-sidebar"],
+[class*="CopilotSidebar"] {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
