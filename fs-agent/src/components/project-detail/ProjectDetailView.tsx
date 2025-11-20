@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
+import { useEstimateDetail } from "@/hooks/useEstimateDetail";
+import { buildStageGateStatus } from "@/lib/stage-gates";
+import StageStepper from "@/components/project-detail/StageStepper";
+import TimelinePanel from "@/components/project-detail/TimelinePanel";
+import LockedStagePanel from "@/components/project-detail/LockedStagePanel";
 import type {
   ArtifactRecord,
   EstimateDetail,
@@ -30,6 +35,7 @@ type AgentState = {
   selectedProjectName?: string | null;
   selectedProjectStage?: string | null;
   timelineVersion?: string | null;
+  stage_gates?: Record<string, any>;
 };
 
 type EditableWbsRow = {
@@ -49,10 +55,10 @@ type EditableQuoteRate = {
 const DEFAULT_ROLE_RATE = 150;
 
 export default function ProjectDetailView({ estimateId }: Props) {
-  const [detail, setDetail] = useState<EstimateDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Use React Query for data fetching
+  const { data: detail, isLoading: loading, error: queryError, invalidate } = useEstimateDetail(estimateId);
   const [actionError, setActionError] = useState<string | null>(null);
+  const error = queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
   const [uploading, setUploading] = useState(false);
   const [isConfirming, setIsConfirming] = useState<
     null | { type: "approve" | "advance"; label: string }
@@ -93,68 +99,32 @@ export default function ProjectDetailView({ estimateId }: Props) {
     setStateRef.current = setState;
   }, [setState]);
 
-  const loadDetail = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false;
-      if (!silent) {
-        setLoading(true);
-        setError(null);
-      }
-      try {
-        const res = await fetch(`/api/estimates/${estimateId}`, {
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          throw new Error("Unable to load estimate detail");
-        }
-        const payload = (await res.json()) as EstimateDetail;
-        setDetail(payload);
-        const latestTimeline = payload.timeline[0]?.id ?? null;
-        setStateRef.current((prev) => ({
-          ...(prev || {}),
-          selectedProjectId: payload.estimate.id,
-          selectedProjectName: payload.estimate.name,
-          selectedProjectStage: payload.estimate.stage,
-          timelineVersion: latestTimeline,
-          workflow: "estimates",
-          entity_id: payload.estimate.id,
-          entity_type: "project",
-          entity_data: {
-            id: payload.estimate.id,
-            name: payload.estimate.name,
-            stage: payload.estimate.stage,
-          },
-        }));
-      } catch (err) {
-        if (!silent) {
-          setError(err instanceof Error ? err.message : "Unexpected error");
-        } else {
-          console.error("[project-detail] Silent refresh failed", err);
-        }
-      } finally {
-        if (!silent) {
-          setLoading(false);
-        }
-      }
-    },
-    [estimateId],
-  );
+  // Build stage gates
+  const stageGates = useMemo(() => buildStageGateStatus(detail ?? null), [detail]);
 
+  // Update Copilot shared state with gates
   useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      if (!cancelled) {
-        await loadDetail();
-      }
-    };
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadDetail]);
+    if (!detail) return;
+    const latestTimeline = detail.timeline[0]?.id ?? null;
+    setStateRef.current((prev) => ({
+      ...(prev || {}),
+      selectedProjectId: detail.estimate.id,
+      selectedProjectName: detail.estimate.name,
+      selectedProjectStage: detail.estimate.stage,
+      timelineVersion: latestTimeline,
+      workflow: "estimates",
+      entity_id: detail.estimate.id,
+      entity_type: "project",
+      entity_data: {
+        id: detail.estimate.id,
+        name: detail.estimate.name,
+        stage: detail.estimate.stage,
+      },
+      stage_gates: stageGates,
+    }));
+  }, [detail, stageGates]);
 
-  const currentTimelineVersion = detail?.timeline[0]?.id ?? null;
-
+  // Invalidate query when Copilot updates stage
   useEffect(() => {
     if (!agentState) return;
     if (agentState.selectedProjectId !== estimateId) return;
@@ -163,24 +133,23 @@ export default function ProjectDetailView({ estimateId }: Props) {
       detail &&
       agentState.selectedProjectStage !== detail.estimate.stage
     ) {
-      loadDetail({ silent: true });
-      return;
+      invalidate();
     }
     if (
       agentState.timelineVersion &&
-      currentTimelineVersion &&
-      agentState.timelineVersion !== currentTimelineVersion
+      detail?.timeline[0]?.id &&
+      agentState.timelineVersion !== detail.timeline[0].id
     ) {
-      loadDetail({ silent: true });
+      invalidate();
     }
   }, [
     agentState?.selectedProjectId,
     agentState?.selectedProjectStage,
     agentState?.timelineVersion,
-    currentTimelineVersion,
     detail?.estimate.stage,
+    detail?.timeline,
     estimateId,
-    loadDetail,
+    invalidate,
   ]);
 
   const currentStage = detail?.estimate.stage ?? "";
@@ -361,10 +330,11 @@ export default function ProjectDetailView({ estimateId }: Props) {
     !detail?.requirements?.validated;
 
   const applyDetail = useCallback((payload: EstimateDetail) => {
-    setDetail(payload);
+    // React Query will handle the state update
+    invalidate();
     setBusinessCaseDraft(payload.businessCase.content ?? "");
     setRequirementsDraft(payload.requirements.content ?? "");
-  }, []);
+  }, [invalidate]);
 
   const handleBusinessCaseGenerate = useCallback(
     async (source: "user" | "copilot" = "user") => {
@@ -486,7 +456,14 @@ export default function ProjectDetailView({ estimateId }: Props) {
         if (!res.ok) {
           throw new Error(payload.error || "Unable to generate WBS");
         }
-        applyDetail(payload as EstimateDetail);
+        const typedPayload = payload as EstimateDetail;
+        // Update local WBS rows state immediately
+        const generatedRows = typedPayload.effortEstimate.rows.map((row, index) =>
+          mapWbsRowToEditable(row, index),
+        );
+        setWbsRows(generatedRows);
+        // Invalidate React Query cache to refresh gates
+        invalidate();
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Generation failed";
@@ -498,7 +475,7 @@ export default function ProjectDetailView({ estimateId }: Props) {
         setWbsGenerating(false);
       }
     },
-    [estimateId, applyDetail],
+    [estimateId, invalidate],
   );
 
   const handleWbsSave = useCallback(
@@ -913,6 +890,98 @@ export default function ProjectDetailView({ estimateId }: Props) {
     },
   });
 
+  // Direct editing actions for Copilot
+  useCopilotAction({
+    name: "update_business_case",
+    description: "Update the Business Case content directly. Auto-saves automatically.",
+    parameters: [
+      { name: "content", description: "The new Business Case content (HTML)", required: true },
+    ],
+    handler: async ({ content }) => {
+      if (!detail) {
+        throw new Error("No estimate loaded");
+      }
+      const gates = stageGates["Business Case"];
+      if (!gates?.canAccess) {
+        throw new Error("Business Case is locked. Need 2+ artifacts first.");
+      }
+      setBusinessCaseDraft(content);
+      await handleBusinessCaseSave();
+      invalidate();
+      return "Business Case updated and saved";
+    },
+  });
+
+  useCopilotAction({
+    name: "update_requirements",
+    description: "Update the Requirements content directly. Auto-saves automatically.",
+    parameters: [
+      { name: "content", description: "The new Requirements content (HTML)", required: true },
+    ],
+    handler: async ({ content }) => {
+      if (!detail) {
+        throw new Error("No estimate loaded");
+      }
+      const gates = stageGates["Requirements"];
+      if (!gates?.canAccess) {
+        throw new Error("Requirements is locked. Business Case must be approved first.");
+      }
+      setRequirementsDraft(content);
+      await handleRequirementsSave();
+      invalidate();
+      return "Requirements updated and saved";
+    },
+  });
+
+  useCopilotAction({
+    name: "update_quote_terms",
+    description: "Update payment terms or delivery timeline for the Quote stage.",
+    parameters: [
+      { name: "payment_terms", description: "Payment terms (e.g., 'Net 30')" },
+      { name: "delivery_timeline", description: "Delivery timeline description" },
+    ],
+    handler: async ({ payment_terms, delivery_timeline }) => {
+      if (!detail) {
+        throw new Error("No estimate loaded");
+      }
+      const gates = stageGates["Quote"];
+      if (!gates?.canAccess) {
+        throw new Error("Quote is locked. Effort Estimate must be approved first.");
+      }
+      if (payment_terms) {
+        setPaymentTerms(payment_terms);
+      }
+      if (delivery_timeline) {
+        setDeliveryTimeline(delivery_timeline);
+      }
+      await handleQuoteSave();
+      invalidate();
+      return "Quote terms updated and saved";
+    },
+  });
+
+  // Gate-aware advance action
+  useCopilotAction({
+    name: "advance_stage",
+    description: "Advance to the next stage if all gates are satisfied.",
+    handler: async () => {
+      if (!detail) {
+        throw new Error("No estimate loaded");
+      }
+      const currentGates = stageGates[detail.estimate.stage];
+      if (!currentGates?.canAdvance) {
+        const blocking = currentGates?.readyToAdvance.filter((g) => !g.passed && g.blocking);
+        if (blocking && blocking.length > 0) {
+          throw new Error(`Cannot advance: ${blocking.map((g) => g.message).join(", ")}`);
+        }
+        throw new Error("Cannot advance: gates not satisfied");
+      }
+      await runAction("advance");
+      invalidate();
+      return "Stage advanced successfully";
+    },
+  });
+
   const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const formData = new FormData();
@@ -999,166 +1068,246 @@ export default function ProjectDetailView({ estimateId }: Props) {
     );
   }
 
+  const currentGates = detail ? stageGates[detail.estimate.stage] : null;
+
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-10 text-slate-900">
-      <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        <header className="space-y-3 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Estimate Detail
-          </p>
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-3xl font-semibold text-slate-900">
-                {detail.estimate.name}
-              </h1>
-              <p className="text-slate-500">
-                Owner · {detail.estimate.owner} · Updated{" "}
-                {detail.estimate.updated_at
-                  ? formatDistanceToNow(new Date(detail.estimate.updated_at), {
-                      addSuffix: true,
-                    })
-                  : "—"}
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() =>
-                  setIsConfirming({ type: "approve", label: "Approve Stage" })
-                }
-                className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-              >
-                Approve Stage
-              </button>
-              <button
-                onClick={() =>
-                  setIsConfirming({ type: "advance", label: "Advance Stage" })
-                }
-                disabled={!canAdvance}
-                className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
-              >
-                Advance Stage
-              </button>
-            </div>
+      <div className="mx-auto flex max-w-7xl gap-8">
+        {/* Left Pane - Sticky Stepper & Timeline */}
+        <aside className="sticky top-4 h-fit w-80 space-y-6">
+          <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+            <StageStepper
+              currentStage={detail?.estimate.stage ?? ""}
+              gates={stageGates}
+              detail={detail}
+            />
           </div>
-          {actionError && (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-600">
-              {actionError}
+          {detail && (
+            <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+              <TimelinePanel timeline={detail.timeline} />
             </div>
           )}
-          <textarea
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            placeholder="Add notes for the next action (optional)"
-            className="w-full rounded-2xl border border-slate-200 p-3 text-sm outline-none ring-slate-300 focus:border-slate-400 focus:ring-2"
-          />
-        </header>
+        </aside>
 
-        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <StageStepper currentStageIndex={currentStageIndex} />
-        </section>
+        {/* Right Pane - Current Stage Panel */}
+        <main className="flex-1 space-y-6">
+          <header className="space-y-3 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Estimate Detail
+            </p>
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h1 className="text-3xl font-semibold text-slate-900">
+                  {detail?.estimate.name ?? "Loading..."}
+                </h1>
+                <p className="text-slate-500">
+                  Owner · {detail?.estimate.owner ?? "—"} · Updated{" "}
+                  {detail?.estimate.updated_at
+                    ? formatDistanceToNow(new Date(detail.estimate.updated_at), {
+                        addSuffix: true,
+                      })
+                    : "—"}
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() =>
+                    setIsConfirming({ type: "approve", label: "Approve Stage" })
+                  }
+                  className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Approve Stage
+                </button>
+                <button
+                  onClick={() =>
+                    setIsConfirming({ type: "advance", label: "Advance Stage" })
+                  }
+                  disabled={!canAdvance}
+                  className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                >
+                  Advance Stage
+                </button>
+              </div>
+            </div>
+            {actionError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-600">
+                {actionError}
+              </div>
+            )}
+            <textarea
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Add notes for the next action (optional)"
+              className="w-full rounded-2xl border border-slate-200 p-3 text-sm outline-none ring-slate-300 focus:border-slate-400 focus:ring-2"
+            />
+          </header>
 
-        <section className="grid gap-6 xl:grid-cols-2">
-          <BusinessCasePanel
-            draft={businessCaseDraft}
-            approved={detail.businessCase.approved}
-            updatedAt={detail.businessCase.updated_at}
-            dirty={Boolean(businessCaseDirty)}
-            saving={businessCaseSaving}
-            generating={businessCaseGenerating}
-            canApprove={canApproveBusinessCase}
-            onChange={setBusinessCaseDraft}
-            onGenerate={() => handleBusinessCaseGenerate("user")}
-            onSave={() => handleBusinessCaseSave()}
-            onApprove={() =>
-              handleBusinessCaseSave({
-                approve: true,
-                notes: notes.trim() || undefined,
-              })
-            }
-          />
-          <RequirementsPanel
-            draft={requirementsDraft}
-            validated={detail.requirements.validated}
-            updatedAt={detail.requirements.updated_at}
-            dirty={Boolean(requirementsDirty)}
-            saving={requirementsSaving}
-            generating={requirementsGenerating}
-            canValidate={canValidateRequirements}
-            onChange={setRequirementsDraft}
-            onGenerate={() => handleRequirementsGenerate("user")}
-            onSave={() => handleRequirementsSave()}
-            onValidate={() =>
-              handleRequirementsSave({
-                validate: true,
-                notes: notes.trim() || undefined,
-              })
-            }
-          />
-        </section>
+          {/* Current Stage Panel */}
+          {detail && (
+            <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+              {detail.estimate.stage === "Artifacts" && (
+                <ArtifactsPanel
+                  artifacts={detail.artifacts}
+                  onUpload={handleUpload}
+                  uploading={uploading}
+                />
+              )}
 
-        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <EffortEstimatePanel
-            rows={wbsRows}
-            totalHours={wbsTotalHours}
-            roleSummary={wbsRoleSummary}
-            versions={wbsVersions}
-            approvedVersion={approvedWbsVersion}
-            dirty={wbsDirty}
-            saving={wbsSaving}
-            generating={wbsGenerating}
-            hasApproved={hasApprovedWbs}
-            canApprove={canApproveWbs}
-            onGenerate={triggerWbsGenerate}
-            onSave={triggerWbsSave}
-            onApprove={triggerWbsApprove}
-            onAddRow={handleAddWbsRow}
-            onRowChange={handleWbsRowChange}
-            onRemoveRow={handleRemoveWbsRow}
-          />
-        </section>
+              {detail.estimate.stage === "Business Case" && (
+                <>
+                  {stageGates["Business Case"]?.canAccess ? (
+                    <BusinessCasePanel
+                      draft={businessCaseDraft}
+                      approved={detail.businessCase.approved}
+                      updatedAt={detail.businessCase.updated_at}
+                      dirty={Boolean(businessCaseDirty)}
+                      saving={businessCaseSaving}
+                      generating={businessCaseGenerating}
+                      canApprove={canApproveBusinessCase}
+                      onChange={setBusinessCaseDraft}
+                      onGenerate={() => handleBusinessCaseGenerate("user")}
+                      onSave={() => handleBusinessCaseSave()}
+                      onApprove={() =>
+                        handleBusinessCaseSave({
+                          approve: true,
+                          notes: notes.trim() || undefined,
+                        })
+                      }
+                    />
+                  ) : (
+                    <LockedStagePanel
+                      stageTitle="Business Case"
+                      gateInfo={stageGates["Business Case"]}
+                    />
+                  )}
+                </>
+              )}
 
-        <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-          <QuotePanel
-            rows={detail.effortEstimate.rows}
-            roleRates={quoteRates}
-            overrides={quoteOverrides}
-            paymentTerms={paymentTerms}
-            deliveryTimeline={deliveryTimeline}
-            delivered={quoteDelivered}
-            deliveredAt={quoteDeliveredAt}
-            totals={quoteTotals}
-            saving={quoteSaving}
-            exporting={quoteExporting}
-            copying={quoteCopying}
-            disabled={quoteDelivered}
-            canDeliver={
-              Boolean(quoteTotals && quoteTotals.lines.length > 0) &&
-              hasApprovedWbs &&
-              !quoteDelivered
-            }
-            hasQuoteData={Boolean(quoteTotals && quoteTotals.lines.length > 0)}
-            onRateChange={handleQuoteRateChange}
-            onAddRole={handleAddQuoteRole}
-            onRemoveRole={handleRemoveQuoteRole}
-            onOverrideChange={handleOverrideChange}
-            onPaymentTermsChange={setPaymentTerms}
-            onDeliveryTimelineChange={setDeliveryTimeline}
-            onSave={handleQuoteSave}
-            onDeliver={handleMarkDelivered}
-            onReopen={handleReopenQuote}
-            onExport={handleExportQuote}
-            onCopy={handleCopyQuote}
-          />
-        </section>
+              {detail.estimate.stage === "Requirements" && (
+                <>
+                  {stageGates["Requirements"]?.canAccess ? (
+                    <RequirementsPanel
+                      draft={requirementsDraft}
+                      validated={detail.requirements.validated}
+                      updatedAt={detail.requirements.updated_at}
+                      dirty={Boolean(requirementsDirty)}
+                      saving={requirementsSaving}
+                      generating={requirementsGenerating}
+                      canValidate={canValidateRequirements}
+                      onChange={setRequirementsDraft}
+                      onGenerate={() => handleRequirementsGenerate("user")}
+                      onSave={() => handleRequirementsSave()}
+                      onValidate={() =>
+                        handleRequirementsSave({
+                          validate: true,
+                          notes: notes.trim() || undefined,
+                        })
+                      }
+                    />
+                  ) : (
+                    <LockedStagePanel
+                      stageTitle="Requirements"
+                      gateInfo={stageGates["Requirements"]}
+                    />
+                  )}
+                </>
+              )}
 
-        <section className="grid gap-6 lg:grid-cols-2">
-          <ArtifactsPanel
-            artifacts={detail.artifacts}
-            onUpload={handleUpload}
-            uploading={uploading}
-          />
-          <TimelinePanel timeline={detail.timeline} />
-        </section>
+              {detail.estimate.stage === "Solution/Architecture" && (
+                <>
+                  {stageGates["Solution/Architecture"]?.canAccess ? (
+                    <div className="space-y-4">
+                      <h2 className="text-xl font-semibold text-slate-900">
+                        Solution & Architecture
+                      </h2>
+                      <p className="text-sm text-slate-600">
+                        This stage will be enhanced in a future story with structured fields for approach, stack, and risks.
+                      </p>
+                    </div>
+                  ) : (
+                    <LockedStagePanel
+                      stageTitle="Solution/Architecture"
+                      gateInfo={stageGates["Solution/Architecture"]}
+                    />
+                  )}
+                </>
+              )}
+
+              {detail.estimate.stage === "Effort Estimate" && (
+                <>
+                  {stageGates["Effort Estimate"]?.canAccess ? (
+                    <EffortEstimatePanel
+                      rows={wbsRows}
+                      totalHours={wbsTotalHours}
+                      roleSummary={wbsRoleSummary}
+                      versions={wbsVersions}
+                      approvedVersion={approvedWbsVersion}
+                      dirty={wbsDirty}
+                      saving={wbsSaving}
+                      generating={wbsGenerating}
+                      hasApproved={hasApprovedWbs}
+                      canApprove={canApproveWbs}
+                      onGenerate={triggerWbsGenerate}
+                      onSave={triggerWbsSave}
+                      onApprove={triggerWbsApprove}
+                      onAddRow={handleAddWbsRow}
+                      onRowChange={handleWbsRowChange}
+                      onRemoveRow={handleRemoveWbsRow}
+                    />
+                  ) : (
+                    <LockedStagePanel
+                      stageTitle="Effort Estimate"
+                      gateInfo={stageGates["Effort Estimate"]}
+                    />
+                  )}
+                </>
+              )}
+
+              {detail.estimate.stage === "Quote" && (
+                <>
+                  {stageGates["Quote"]?.canAccess ? (
+                    <QuotePanel
+                      rows={detail.effortEstimate.rows}
+                      roleRates={quoteRates}
+                      overrides={quoteOverrides}
+                      paymentTerms={paymentTerms}
+                      deliveryTimeline={deliveryTimeline}
+                      delivered={quoteDelivered}
+                      deliveredAt={quoteDeliveredAt}
+                      totals={quoteTotals}
+                      saving={quoteSaving}
+                      exporting={quoteExporting}
+                      copying={quoteCopying}
+                      disabled={quoteDelivered}
+                      canDeliver={
+                        Boolean(quoteTotals && quoteTotals.lines.length > 0) &&
+                        hasApprovedWbs &&
+                        !quoteDelivered
+                      }
+                      hasQuoteData={Boolean(quoteTotals && quoteTotals.lines.length > 0)}
+                      onRateChange={handleQuoteRateChange}
+                      onAddRole={handleAddQuoteRole}
+                      onRemoveRole={handleRemoveQuoteRole}
+                      onOverrideChange={handleOverrideChange}
+                      onPaymentTermsChange={setPaymentTerms}
+                      onDeliveryTimelineChange={setDeliveryTimeline}
+                      onSave={handleQuoteSave}
+                      onDeliver={handleMarkDelivered}
+                      onReopen={handleReopenQuote}
+                      onExport={handleExportQuote}
+                      onCopy={handleCopyQuote}
+                    />
+                  ) : (
+                    <LockedStagePanel
+                      stageTitle="Quote"
+                      gateInfo={stageGates["Quote"]}
+                    />
+                  )}
+                </>
+              )}
+            </section>
+          )}
+        </main>
       </div>
 
       {isConfirming && (
@@ -1175,38 +1324,6 @@ export default function ProjectDetailView({ estimateId }: Props) {
   );
 }
 
-function StageStepper({ currentStageIndex }: { currentStageIndex: number }) {
-  return (
-    <ol className="grid gap-4 md:grid-cols-6">
-      {STAGES.map((stage, index) => {
-        const status =
-          index < currentStageIndex
-            ? "complete"
-            : index === currentStageIndex
-            ? "current"
-            : "locked";
-        return (
-          <li
-            key={stage.key}
-            className={`rounded-2xl border p-4 ${
-              status === "current"
-                ? "border-slate-900 bg-slate-900 text-white"
-                : status === "complete"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-slate-100 bg-slate-50 text-slate-400"
-            }`}
-          >
-            <p className="text-xs uppercase tracking-widest">
-              {index + 1 < 10 ? `0${index + 1}` : index + 1}
-            </p>
-            <h3 className="text-lg font-semibold">{stage.title}</h3>
-            <p className="text-sm opacity-80">{stage.description}</p>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
 
 type BusinessCasePanelProps = {
   draft: string;
@@ -2056,36 +2173,6 @@ function ArtifactsPanel({
   );
 }
 
-function TimelinePanel({ timeline }: { timeline: TimelineRecord[] }) {
-  return (
-    <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-      <h2 className="text-xl font-semibold text-slate-900">Timeline</h2>
-      <p className="text-sm text-slate-500">
-        Every approval and advance is captured for auditability.
-      </p>
-      <ul className="mt-4 space-y-4">
-        {timeline.map((entry) => (
-          <li key={entry.id} className="rounded-2xl border border-slate-100 p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-400">
-              {new Date(entry.created_at).toLocaleString()}
-            </p>
-            <p className="text-sm font-semibold text-slate-900">
-              {entry.actor} · {entry.action}
-            </p>
-            {entry.notes && (
-              <p className="text-sm text-slate-500">{entry.notes}</p>
-            )}
-          </li>
-        ))}
-        {timeline.length === 0 && (
-          <li className="rounded-2xl border border-slate-100 p-4 text-sm text-slate-500">
-            No timeline events yet. Approvals and advances will appear here.
-          </li>
-        )}
-      </ul>
-    </div>
-  );
-}
 
 function ConfirmationDialog({
   title,
