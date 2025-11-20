@@ -22,3 +22,57 @@ body,
 html {
   height: 100%;
 }
+
+/* Print styling for agreements */
+@page {
+  size: letter;
+  margin: 1in;
+}
+
+@media print {
+  /* Hide everything except the preview content */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Show only the preview document */
+  [data-print-content],
+  [data-print-content] * {
+    visibility: visible;
+  }
+  
+  [data-print-content] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  
+  /* Prevent page breaks inside elements */
+  h1, h2, h3, h4, h5, h6, p, li {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  
+  ul, ol {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  
+  li {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    orphans: 3;
+    widows: 3;
+  }
+  
+  p {
+    orphans: 3;
+    widows: 3;
+  }
+}

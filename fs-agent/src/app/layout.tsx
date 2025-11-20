@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { CopilotKit } from "@copilotkit/react-core";
-import { GlobalCopilot } from "@/components/copilot/GlobalCopilot";
+import { DockedCopilot } from "@/components/copilot/DockedCopilot";
 import { QueryProvider } from "@/providers/QueryProvider";
 import "./globals.css";
 import "@copilotkit/react-ui/styles.css";
@@ -21,8 +21,10 @@ export default function RootLayout({
       <body className={"antialiased"}>
         <QueryProvider>
           <CopilotKit runtimeUrl="/api/copilotkit" agent="sample_agent">
-            {children}
-            <GlobalCopilot />
+            <div className="pr-0 lg:pr-[320px]">
+              {children}
+            </div>
+            <DockedCopilot />
           </CopilotKit>
         </QueryProvider>
       </body>

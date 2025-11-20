@@ -6,7 +6,7 @@ import { formatDistanceToNow } from "date-fns";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
 import { useAutoSyncDocument } from "@/hooks/useAutoSyncDocument";
-import RichTextEditor from "@/components/project-detail/RichTextEditor";
+import DualPaneEditor from "@/components/editor/DualPaneEditor";
 import type {
   AgreementDetail,
   AgreementVersion,
@@ -41,7 +41,19 @@ export default function AgreementDetailView({
   const [overrideRationale, setOverrideRationale] = useState("");
   const [showOverrideModal, setShowOverrideModal] = useState(false);
   const [showFinishingSaveModal, setShowFinishingSaveModal] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(true);
+  const [highlightedSectionId, setHighlightedSectionId] = useState<string | null>(null);
   const router = useRouter();
+
+  // Clear highlighted section after 3 seconds
+  useEffect(() => {
+    if (highlightedSectionId) {
+      const timer = setTimeout(() => {
+        setHighlightedSectionId(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedSectionId]);
 
   const { state, setState } = useCoAgent<AgentState>({
     name: "sample_agent",
@@ -88,6 +100,33 @@ export default function AgreementDetailView({
     agreement ? { type: agreement.type, counterparty: agreement.counterparty } : undefined
   );
 
+  const loadTemplate = useCallback(async (agreementType: string) => {
+    try {
+      // Fetch exemplars of this type
+      const exemplarsRes = await fetch(`/api/policies/exemplars`);
+      if (!exemplarsRes.ok) return;
+      const exemplars = await exemplarsRes.json();
+      const matchingExemplar = exemplars.find(
+        (e: any) => e.type === agreementType
+      );
+      if (!matchingExemplar) return;
+      
+      // Fetch exemplar content
+      const contentRes = await fetch(
+        `/api/policies/exemplars/${matchingExemplar.id}/content`
+      );
+      if (!contentRes.ok) return;
+      const contentData = await contentRes.json();
+      
+      // Set as initial content (user can edit)
+      if (contentData.content_html || contentData.content) {
+        setContent(contentData.content_html || contentData.content);
+      }
+    } catch (err) {
+      console.error("Failed to load template:", err);
+    }
+  }, []);
+
   const loadAgreement = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -98,14 +137,20 @@ export default function AgreementDetailView({
       }
       const data = await res.json();
       setAgreement(data);
-      setContent(data.content || "");
+      // Use content_html (from autosave) if available, otherwise fall back to content
+      setContent(data.content_html || data.content || "");
       setSelectedVersion(data.current_version);
+      
+      // Load template if content is empty and agreement type is known
+      if (!data.content_html && !data.content && data.type) {
+        loadTemplate(data.type);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load agreement");
     } finally {
       setLoading(false);
     }
-  }, [agreementId]);
+  }, [agreementId, loadTemplate]);
 
   useEffect(() => {
     loadAgreement();
@@ -393,6 +438,77 @@ export default function AgreementDetailView({
     },
   });
 
+  useCopilotAction({
+    name: "update_agreement_content",
+    description: "Update the agreement content directly. Can replace text, update sections, or set new content. Auto-saves automatically.",
+    parameters: [
+      { 
+        name: "new_content", 
+        description: "The complete new HTML content for the agreement. Use this if you want to replace the entire content.",
+        required: false 
+      },
+      { 
+        name: "find_text", 
+        description: "Text to find in the current content (for find-and-replace operations).",
+        required: false 
+      },
+      { 
+        name: "replace_text", 
+        description: "Text to replace the found text with (use with find_text).",
+        required: false 
+      },
+    ],
+    handler: async ({ new_content, find_text, replace_text }) => {
+      if (!agreement) {
+        return "No agreement loaded.";
+      }
+      if (!new_content && (!find_text || !replace_text)) {
+        return "Either provide new_content or both find_text and replace_text.";
+      }
+      
+      try {
+        let updatedContent = content;
+        
+        if (new_content) {
+          // Replace entire content
+          updatedContent = new_content;
+        } else if (find_text && replace_text) {
+          // Find and replace (case-insensitive, replace all occurrences)
+          const regex = new RegExp(find_text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+          updatedContent = content.replace(regex, replace_text);
+          if (updatedContent === content) {
+            return `Could not find "${find_text}" in the agreement content.`;
+          }
+        }
+        
+        // Update the content state
+        setContent(updatedContent);
+        
+        // Force an immediate save with the new content
+        // We need to manually call the save endpoint since forceSave uses the old content value
+        const response = await fetch(`/api/contracts/${agreement.id}/autosave`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content_html: updatedContent,
+            content_text: updatedContent.replace(/<[^>]*>/g, "").trim(),
+          }),
+        });
+        
+        if (!response.ok) {
+          throw new Error("Failed to save changes");
+        }
+        
+        // Reload to get updated state
+        await loadAgreement();
+        
+        return `Agreement content updated successfully.${find_text ? ` Replaced "${find_text}" with "${replace_text}".` : ''}`;
+      } catch (err) {
+        return `Failed to update agreement: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  });
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -498,19 +614,29 @@ export default function AgreementDetailView({
           )}
         </header>
 
-        <div className="grid gap-8 lg:grid-cols-[1fr,320px]">
-          <section className="space-y-6">
-            <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-slate-900">
-                  Agreement Content
-                </h2>
-                <AutoSaveStatusBadge status={autoSave.status} lastSavedAt={autoSave.lastSavedAt} />
-              </div>
-              <RichTextEditor value={content} onChange={setContent} />
+        <div className="space-y-6">
+          <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-slate-900">
+                Agreement Content
+              </h2>
+              <AutoSaveStatusBadge status={autoSave.status} lastSavedAt={autoSave.lastSavedAt} />
             </div>
-          </section>
+            <div className="h-[600px] w-full overflow-hidden">
+              <DualPaneEditor
+                value={content}
+                onChange={setContent}
+                templateType="agreement"
+                agreementType={agreement?.type as "MSA" | "SOW" | undefined}
+                previewVisible={previewVisible}
+                onPreviewToggle={setPreviewVisible}
+                highlightedSectionId={highlightedSectionId}
+              />
+            </div>
+          </div>
+        </div>
 
+        <div className="mt-8 grid gap-8 lg:grid-cols-[1fr,320px]">
           <aside className="space-y-6">
             <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
               <h3 className="mb-4 text-lg font-semibold text-slate-900">

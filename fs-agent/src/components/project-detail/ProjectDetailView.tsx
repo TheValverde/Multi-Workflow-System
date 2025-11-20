@@ -23,7 +23,7 @@ import {
   hasApprovedEffortEstimate,
 } from "@/lib/estimates";
 import { STAGES, getStageIndex, isFinalStage } from "@/lib/stages";
-import RichTextEditor from "@/components/project-detail/RichTextEditor";
+import DualPaneEditor from "@/components/editor/DualPaneEditor";
 
 type Props = {
   estimateId: string;
@@ -82,6 +82,8 @@ export default function ProjectDetailView({ estimateId }: Props) {
   const [wbsRows, setWbsRows] = useState<EditableWbsRow[]>([]);
   const [wbsSaving, setWbsSaving] = useState(false);
   const [wbsGenerating, setWbsGenerating] = useState(false);
+  const [businessCasePreviewVisible, setBusinessCasePreviewVisible] = useState(true);
+  const [requirementsPreviewVisible, setRequirementsPreviewVisible] = useState(true);
   const { state: agentState, setState } = useCoAgent<AgentState>({
     name: "sample_agent",
   });
@@ -1382,7 +1384,15 @@ function BusinessCasePanel({
         Requirements stage.
       </p>
       <div className="mt-4 space-y-3">
-        <RichTextEditor value={draft} onChange={onChange} />
+        <div className="h-[500px]">
+          <DualPaneEditor
+            value={draft}
+            onChange={onChange}
+            templateType="business-case"
+            previewVisible={true}
+            onPreviewToggle={() => {}}
+          />
+        </div>
         <div className="flex flex-wrap gap-3">
           <button
             onClick={onGenerate}
@@ -1467,7 +1477,15 @@ function RequirementsPanel({
         unlock the downstream stages.
       </p>
       <div className="mt-4 space-y-3">
-        <RichTextEditor value={draft} onChange={onChange} />
+        <div className="h-[500px]">
+          <DualPaneEditor
+            value={draft}
+            onChange={onChange}
+            templateType="requirements"
+            previewVisible={true}
+            onPreviewToggle={() => {}}
+          />
+        </div>
         <div className="flex flex-wrap gap-3">
           <button
             onClick={onGenerate}
