@@ -1,0 +1,66 @@
+[
+  {
+    "title": "Client Cooperation & Data Access (MSA 1)",
+    "category": "Delivery Governance",
+    "summary": "Reinforces the cooperation duties from MSA 1, Section 2.",
+    "body": "Client must provide timely direction, decision makers, and clean datasets required for AI analysis. VBT is not liable for schedule or quality impacts caused by missing stakeholders or inaccessible data, but will promptly escalate when obligations are unmet. Reference exemplar: “MSA 1”.",
+    "tags": ["MSA", "cooperation", "data-access"]
+  },
+  {
+    "title": "Change Order Discipline (MSA 2)",
+    "category": "Delivery Governance",
+    "summary": "Captures the five-day change-impact process in MSA 2.",
+    "body": "Any scope change request must be submitted in writing to the VBT product owner. VBT responds within five business days with fee, schedule, and service impacts; only signed change orders modify the baseline. Immateral tweaks require no CO. Reference exemplar: “MSA 2”.",
+    "tags": ["MSA", "change-order", "scope-control"]
+  },
+  {
+    "title": "Annual Rate Adjustment & Past-Due Remedies (MSA 3)",
+    "category": "Commercial Terms",
+    "summary": "Restates late fee and 3% annual increase from MSA 3.",
+    "body": "Invoices unpaid past the SOW due date accrue 1.5% monthly and may trigger suspension after 15 days. VBT may adjust rates annually (approx. 3%) with 30 days’ notice. Client bears taxes on its own income; VBT cannot bill back statutory charges. Reference exemplar: “MSA 3”.",
+    "tags": ["MSA", "billing", "rate-increase"]
+  },
+  {
+    "title": "TrackFrame MVP Scope Guardrails (SOW 1)",
+    "category": "Solution Architecture",
+    "summary": "Defines the MVP deliverables and exclusions from SOW 1.",
+    "body": "TrackFrame MVP must include authentication, Google Drive, Notion, optional Slack connector, the warehouse matching workflow, and polished UI. Autonomous self-learning modules are explicitly out-of-scope for this phase, and Slack integration is nice-to-have only. Reference exemplar: “SOW 1”.",
+    "tags": ["SOW", "TrackFrame", "scope"]
+  },
+  {
+    "title": "ClearPack Phase 2 Cost Ceiling (SOW 2)",
+    "category": "Commercial Terms",
+    "summary": "Documents the $686K not-to-exceed lock from SOW 2.",
+    "body": "Phase 2 modernization for ClearPack is billed hourly at the discounted $196/hr rate (reflecting 20% partnership discount) with an overall cost cap of $686,000 unless Client pre-approves an increase. Prior $20K deposit rolls over and is re-applied if the SOW ends early. Reference exemplar: “SOW 2”.",
+    "tags": ["SOW", "clearpack", "not-to-exceed"]
+  },
+  {
+    "title": "Consumer Persona Deliverables & Exclusions (SOW 3)",
+    "category": "Data & AI",
+    "summary": "Outlines required personas and the exclusions in SOW 3.",
+    "body": "Project must analyze Shopify, Meta Ads, KnoCommerce, Klaviyo, and Amazon data to produce 4–5 personas, Python notebooks, and a handover session. Automated pipelines, CDP builds, or ongoing persona maintenance are explicitly out-of-scope. Reference exemplar: “SOW 3”.",
+    "tags": ["SOW", "personas", "data-analysis"]
+  },
+  {
+    "title": "AI Sprint Fixed Fee & Refund Window (SOW 4)",
+    "category": "Commercial Terms",
+    "summary": "Captures the fixed $40K fee and deposit handling from SOW 4.",
+    "body": "AI Sprint work is a fixed $40,000 regardless of hours consumed. $15,000 deposit is due within 10 business days, is applied pro rata upon termination, and may be refunded within 10 days or applied to future invoices at Client’s option. Reference exemplar: “SOW 4”.",
+    "tags": ["SOW", "ai-sprint", "deposit"]
+  },
+  {
+    "title": "AI Sprint Billing Cadence (SOW 5)",
+    "category": "Commercial Terms",
+    "summary": "Restates the $45K sprint fee and net-15 cadence from SOW 5.",
+    "body": "Client pays a $15K deposit and the balance of the $45K engagement via net-15 invoices issued every two weeks. Deposit is refundable or can roll into future work after completion. Reference exemplar: “SOW 5”.",
+    "tags": ["SOW", "ai-sprint", "billing"]
+  },
+  {
+    "title": "Hybrid NLP R&D Security Controls (SOW 6)",
+    "category": "Security & Compliance",
+    "summary": "Summarizes the security posture required by SOW 6.",
+    "body": "All R&D work must stay inside Client’s approved cloud, no production data leaves the tenant, least-privilege IAM plus audit logging are mandatory, and derived models remain in Client storage. Deliverables include IAM runbooks, notebooks, and Go/No-Go recommendations for productionization. Reference exemplar: “SOW 6”.",
+    "tags": ["SOW", "security", "research"]
+  }
+]
+

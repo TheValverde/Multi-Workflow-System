@@ -103,6 +103,14 @@ export default function AgreementDetailView({
     }
   }, [agreement]);
 
+  useEffect(() => {
+    if (!agreement) return;
+    if (!state?.selected_agreement_version) return;
+    if (state.selected_agreement_version !== agreement.current_version) {
+      loadAgreement();
+    }
+  }, [state?.selected_agreement_version, agreement?.current_version, loadAgreement, agreement?.id]);
+
   const handleSave = async () => {
     if (!agreement) return;
     setSaving(true);

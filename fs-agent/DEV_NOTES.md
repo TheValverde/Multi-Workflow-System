@@ -264,6 +264,30 @@ The integration uses the **AG-UI** pattern from CopilotKit with LangGraph:
 - `buildQuoteCsv` generates header + WBS line items + totals; covered alongside `calculateQuoteTotals` in Vitest.
 - CSV endpoint powers both download + clipboard flows to satisfy the “export + fallback” requirement.
 
+## STORY-011 — Contracts Copilot Actions
+
+### Backend tools
+
+- Added LangGraph tools `apply_proposals` and `create_agreements_from_estimate`.
+- `apply_proposals` rehydrates the latest review draft, rebuilds proposals, applies the requested IDs to the active agreement content, writes a new `contract_versions` row, updates `contract_agreements`, and logs a Copilot-authored note.
+- `create_agreements_from_estimate` pulls business case, requirements highlights, WBS rows, and quote totals to draft both an MSA and SOW (including automatic SOW→estimate linking). Each agreement receives an initial version entry.
+
+### Cross-workflow orchestration
+
+- Shared Supabase helpers (`supabase_json_headers`, `fetch_estimate_summary`, `fetch_business_case_content`, etc.) keep agent-side REST calls consistent with the frontend libraries.
+- Agreement drafts embed WBS + quote data so Contracts can start from an already-aligned baseline. Errors return remediation hints if Effort Estimate or Quote stages are incomplete.
+
+### Frontend sync
+
+- `AgreementDetailView` now watches `selected_agreement_version` from shared state so Copilot-driven version bumps trigger a silent reload.
+- Copilot sidebar messaging was already updated in STORY-010; Story 011 simply activates the contracts toolchain underneath the same UI shell.
+
+### Testing & docs
+
+- Added `TESTING_STORY_011.md` outlining flows for applying proposals, auto-generating MSA/SOW, and regression checks for manual review actions.
+- Agent logs (development mode) capture tool invocations to feed `AI_ARTIFACTS.md` and traceability requirements.
+- Added Python unit tests (`agent/tests/test_copilot_tools.py`) covering proposal generation, application, and contract drafting helpers. Run with `uv run pytest`.
+
 ## Supabase Integration (Placeholder)
 
 ### Environment Variables

@@ -86,7 +86,7 @@ export default function ProjectDetailView({ estimateId }: Props) {
     "estimates",
     estimateId,
     "project",
-    detail ? { name: detail.name, stage: detail.stage } : undefined
+    detail ? { id: estimateId, name: detail.estimate.name, stage: detail.estimate.stage } : undefined
   );
 
   useEffect(() => {
@@ -116,6 +116,14 @@ export default function ProjectDetailView({ estimateId }: Props) {
           selectedProjectName: payload.estimate.name,
           selectedProjectStage: payload.estimate.stage,
           timelineVersion: latestTimeline,
+          workflow: "estimates",
+          entity_id: payload.estimate.id,
+          entity_type: "project",
+          entity_data: {
+            id: payload.estimate.id,
+            name: payload.estimate.name,
+            stage: payload.estimate.stage,
+          },
         }));
       } catch (err) {
         if (!silent) {
@@ -959,6 +967,14 @@ export default function ProjectDetailView({ estimateId }: Props) {
         ...(prev || {}),
         selectedProjectStage: typedPayload.estimate.stage,
         timelineVersion: typedPayload.timeline[0]?.id ?? null,
+        workflow: "estimates",
+        entity_id: typedPayload.estimate.id,
+        entity_type: "project",
+        entity_data: {
+          id: typedPayload.estimate.id,
+          name: typedPayload.estimate.name,
+          stage: typedPayload.estimate.stage,
+        },
       }));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Action failed");

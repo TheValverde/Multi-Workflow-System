@@ -5,7 +5,9 @@ It defines the workflow graph, state, tools, nodes and edges.
 
 import os
 import re
-from typing import Any, List, Optional
+from datetime import datetime
+from html import escape
+from typing import Any, Dict, List, Optional
 from typing_extensions import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, BaseMessage
@@ -457,6 +459,438 @@ def get_project_total(estimate_id: str):
     }
 
 
+def supabase_json_headers(prefer: Optional[str] = None):
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def fetch_agreement_record(agreement_id: str) -> Optional[Dict[str, Any]]:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return None
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/contract_agreements",
+            params={
+                "id": f"eq.{agreement_id}",
+                "select": "id,type,counterparty,content,current_version,linked_estimate_id",
+                "limit": "1",
+            },
+            headers=supabase_json_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data[0] if data else None
+    except Exception:
+        return None
+
+
+def fetch_latest_review_draft_content(agreement_id: str) -> Optional[str]:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return None
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/contract_review_drafts",
+            params={
+                "agreement_id": f"eq.{agreement_id}",
+                "select": "content,created_at",
+                "order": "created_at.desc",
+                "limit": "1",
+            },
+            headers=supabase_json_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return None
+        return data[0].get("content")
+    except Exception:
+        return None
+
+
+def generate_review_proposals_from_content(content: Optional[str]):
+    proposals = []
+    if not content:
+        content = ""
+    lower_content = content.lower()
+
+    if "net 60" in lower_content:
+        proposals.append(
+            {
+                "id": "prop-1",
+                "before": "Payment terms: Net 60",
+                "after": "Payment terms: Net 30",
+                "rationale": "Policy requires Net 30 unless approved exception",
+                "section": "Payment Terms",
+            }
+        )
+
+    if "30 days notice" in lower_content or "30-day" in lower_content:
+        proposals.append(
+            {
+                "id": "prop-2",
+                "before": "Client may terminate with 30 days notice",
+                "after": "Client may terminate with 60 days notice",
+                "rationale": "Standard termination period per policy",
+                "section": "Termination",
+            }
+        )
+
+    if "change order" not in lower_content:
+        proposals.append(
+            {
+                "id": "prop-3",
+                "before": content[:100] + "..." if content else "",
+                "after": "Any scope change request must be submitted in writing. VBT responds within five business days with fee, schedule, and service impacts.",
+                "rationale": "Change order process required per policy",
+                "section": "Change Management",
+            }
+        )
+
+    if not proposals:
+        proposals.append(
+            {
+                "id": "prop-4",
+                "before": "Intellectual property rights remain with Client",
+                "after": "Intellectual property rights remain with Client, except for VBT's pre-existing IP and general methodologies.",
+                "rationale": "IP clause must protect VBT's pre-existing IP per policy",
+                "section": "Intellectual Property",
+            }
+        )
+
+    return proposals
+
+
+def get_next_version_number(agreement_id: str, current_version: Optional[int] = None) -> int:
+    if current_version:
+        return current_version + 1
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return 1
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/contract_versions",
+            params={
+                "agreement_id": f"eq.{agreement_id}",
+                "select": "version_number",
+                "order": "version_number.desc",
+                "limit": "1",
+            },
+            headers=supabase_json_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return 1
+        return int(data[0].get("version_number", 0)) + 1
+    except Exception:
+        return 1
+
+
+def insert_contract_version(
+    agreement_id: str,
+    version_number: int,
+    content: str,
+    notes: Optional[str],
+):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError("Supabase credentials missing")
+    payload = {
+        "agreement_id": agreement_id,
+        "version_number": version_number,
+        "content": content,
+        "notes": notes,
+    }
+    response = requests.post(
+        f"{SUPABASE_URL}/rest/v1/contract_versions",
+        headers=supabase_json_headers("return=representation"),
+        json=payload,
+        timeout=10,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data[0] if data else payload
+
+
+def update_contract_agreement_content(
+    agreement_id: str,
+    content: str,
+    current_version: int,
+):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError("Supabase credentials missing")
+    payload = {
+        "content": content,
+        "current_version": current_version,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    response = requests.patch(
+        f"{SUPABASE_URL}/rest/v1/contract_agreements",
+        params={"id": f"eq.{agreement_id}"},
+        headers=supabase_json_headers("return=representation"),
+        json=payload,
+        timeout=10,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data[0] if data else payload
+
+
+def add_system_note(agreement_id: str, note_text: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return None
+    response = requests.post(
+        f"{SUPABASE_URL}/rest/v1/contract_notes",
+        headers=supabase_json_headers("return=representation"),
+        json={
+            "agreement_id": agreement_id,
+            "note_text": note_text,
+            "created_by": "Copilot",
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data[0] if data else None
+
+
+def apply_proposals_to_content(current_content: str, proposals: List[Dict[str, Any]]):
+    result = current_content or ""
+    applied = []
+    appended = []
+    for proposal in proposals:
+        before = proposal.get("before") or ""
+        after = proposal.get("after") or ""
+        proposal_id = proposal.get("id")
+        if before and before in result:
+            result = result.replace(before, after, 1)
+            applied.append(proposal_id)
+        else:
+            result = f"{result}\n\n{after}"
+            appended.append(proposal_id)
+    return result, applied, appended
+
+
+def fetch_estimate_summary(estimate_id: str) -> Optional[Dict[str, Any]]:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return None
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimates",
+            params={
+                "id": f"eq.{estimate_id}",
+                "select": "id,name,owner,stage",
+                "limit": "1",
+            },
+            headers=supabase_json_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            print(f"[Copilot][fetch_estimate_summary] Empty response for {estimate_id}: {response.text}")
+        return data[0] if data else None
+    except Exception as exc:
+        print(f"[Copilot][fetch_estimate_summary] Error for {estimate_id}: {exc}")
+        return None
+
+
+def fetch_business_case_content(estimate_id: str) -> str:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return ""
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/estimate_business_case",
+            params={
+                "estimate_id": f"eq.{estimate_id}",
+                "select": "content",
+                "limit": "1",
+            },
+            headers=supabase_json_headers(),
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return ""
+        return data[0].get("content") or ""
+    except Exception:
+        return ""
+
+
+def _html_list(items: List[str]) -> str:
+    if not items:
+        return "<p>Pending input.</p>"
+    return "<ul>" + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ul>"
+
+
+def _section(title: str, body: str) -> str:
+    return f"<h2>{escape(title)}</h2>{body}"
+
+
+def _paragraph(text: str) -> str:
+    return f"<p>{escape(text)}</p>"
+
+
+def build_msa_content(
+    estimate: Dict[str, Any],
+    business_case: str,
+    requirements_highlights: List[str],
+    quote_summary: Dict[str, Any],
+    counterparty: str,
+) -> str:
+    objectives = business_case.strip() or "Business objectives pending."
+    highlights = requirements_highlights or ["Requirements summary pending approval."]
+    total_cost = quote_summary.get("total_cost", 0)
+    currency = quote_summary.get("currency", "USD")
+    payment_terms = quote_summary.get("payment_terms") or "Net 30"
+
+    body = [
+        f"<h1>Master Services Agreement — {escape(estimate.get('name', 'Project'))}</h1>",
+        _paragraph(
+            f"<strong>Parties</strong>: VBT (“Provider”) and {escape(counterparty)} (“Client”). "
+            f"<strong>Effective Date</strong>: {datetime.utcnow().date().isoformat()}"
+        ),
+        _section(
+            "1. Engagement Overview",
+            _html_list(
+                [
+                    f"Project: {estimate.get('name', 'Unnamed Project')}",
+                    f"Stage: {estimate.get('stage', 'Draft')}",
+                    f"Summary: {objectives[:400]}",
+                ]
+            ),
+        ),
+        _section("2. Requirements Snapshot", _html_list(highlights[:5])),
+        _section(
+            "3. Commercial Terms",
+            _html_list(
+                [
+                    f"Estimated Total: {currency} {total_cost}",
+                    f"Payment Terms: {payment_terms}",
+                    "Rate Card: Refer to Quote stage details.",
+                ]
+            ),
+        ),
+        _section(
+            "4. Change Management",
+            _paragraph(
+                "Any change to scope requires a written change request with updated fees and schedule."
+            ),
+        ),
+        _section(
+            "5. Intellectual Property",
+            _paragraph(
+                "Client retains ownership of their IP. VBT retains reusable components and methodologies."
+            ),
+        ),
+        _section(
+            "6. Termination",
+            _paragraph("Either party may terminate with 60 days written notice. Earned fees remain payable."),
+        ),
+    ]
+    return "".join(body)
+
+
+def build_sow_content(
+    estimate: Dict[str, Any],
+    wbs_rows,
+    quote_summary: Dict[str, Any],
+    counterparty: str,
+) -> str:
+    total_hours = quote_summary.get("total_hours", 0)
+    currency = quote_summary.get("currency", "USD")
+    total_cost = quote_summary.get("total_cost", 0)
+    payment_terms = quote_summary.get("payment_terms") or "Net 30"
+    delivery_timeline = quote_summary.get("delivery_timeline") or "Delivery within 8 weeks"
+
+    wbs_list = (
+        "<ul>"
+        + "".join(
+            f"<li>{escape(row.get('task_code') or '')}: {escape(row.get('description') or '')} "
+            f"({row.get('hours')}h, {escape(row.get('role') or '')})</li>"
+            for row in wbs_rows[:8]
+        )
+        + "</ul>"
+        if wbs_rows
+        else _paragraph("WBS will be finalized after estimate approval.")
+    )
+
+    body = [
+        f"<h1>Statement of Work — {escape(estimate.get('name', 'Project'))}</h1>",
+        _paragraph(f"<strong>Client</strong>: {escape(counterparty)} | <strong>Stage</strong>: {escape(estimate.get('stage', 'Draft'))}"),
+        _section(
+            "1. Scope Summary",
+            _html_list(
+                [
+                    f"Total Hours: {total_hours}",
+                    f"Total Investment: {currency} {total_cost}",
+                    f"Payment Terms: {payment_terms}",
+                    f"Delivery Timeline: {delivery_timeline}",
+                ]
+            ),
+        ),
+        _section("2. Work Breakdown Structure", wbs_list),
+        _section(
+            "3. Assumptions",
+            _html_list(
+                [
+                    "Client stakeholders available for workshops.",
+                    "Existing systems provide required APIs.",
+                    "Third-party costs billed as incurred.",
+                ]
+            ),
+        ),
+        _section(
+            "4. Acceptance",
+            _paragraph("Deliverables accepted upon completion of defined scope and walkthrough with stakeholders."),
+        ),
+    ]
+    return "".join(body)
+
+
+def create_contract_agreement(
+    agreement_type: str,
+    counterparty: str,
+    content: str,
+    linked_estimate_id: Optional[str] = None,
+):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise ValueError("Supabase credentials missing")
+    payload = {
+        "type": agreement_type,
+        "counterparty": counterparty,
+        "content": content,
+        "linked_estimate_id": linked_estimate_id,
+        "current_version": 1,
+    }
+    response = requests.post(
+        f"{SUPABASE_URL}/rest/v1/contract_agreements",
+        headers=supabase_json_headers("return=representation"),
+        json=payload,
+        timeout=10,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if not data:
+        raise ValueError("Failed to create agreement")
+    agreement = data[0]
+    insert_contract_version(
+        agreement_id=agreement["id"],
+        version_number=1,
+        content=content,
+        notes="Initial version drafted by Copilot",
+    )
+    return agreement
+
+
 @tool
 def load_exemplar_contracts(contract_type: str):
     """
@@ -569,6 +1003,145 @@ def add_agreement_note(agreement_id: str, note: str):
         }
 
 
+@tool
+def apply_proposals(agreement_id: str, proposal_ids: str, notes: str = ""):
+    """
+    Apply selected review proposals to an agreement and create a new version.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return {"error": "Supabase credentials missing"}
+    proposal_id_list = [
+        proposal_id.strip()
+        for proposal_id in (proposal_ids or "").split(",")
+        if proposal_id.strip()
+    ]
+    print(f"[Copilot][apply_proposals] agreement_id={agreement_id}, proposal_ids={proposal_id_list}")
+    if not proposal_id_list:
+        return {"error": "Provide at least one proposal_id to apply."}
+
+    agreement = fetch_agreement_record(agreement_id)
+    if not agreement:
+        return {"error": f"Agreement {agreement_id} was not found."}
+
+    draft_content = fetch_latest_review_draft_content(agreement_id)
+    proposals = generate_review_proposals_from_content(draft_content or agreement.get("content"))
+    if not proposals:
+        return {"error": "No proposals available. Upload or paste a client draft to generate proposals first."}
+
+    selected = [proposal for proposal in proposals if proposal.get("id") in proposal_id_list]
+    if not selected:
+        return {
+            "error": f"No proposals matched ids {proposal_id_list}. Run `review draft` again to refresh proposals.",
+        }
+
+    current_content = agreement.get("content") or ""
+    updated_content, applied, appended = apply_proposals_to_content(current_content, selected)
+    next_version_number = get_next_version_number(agreement_id, agreement.get("current_version"))
+    version_notes = notes or f"Applied {len(selected)} proposal(s) via Copilot."
+
+    try:
+        insert_contract_version(
+            agreement_id=agreement_id,
+            version_number=next_version_number,
+            content=updated_content,
+            notes=version_notes,
+        )
+        update_contract_agreement_content(
+            agreement_id=agreement_id,
+            content=updated_content,
+            current_version=next_version_number,
+        )
+        add_system_note(
+            agreement_id,
+            f"Copilot applied proposals {', '.join(proposal_id_list)}.",
+        )
+    except Exception as exc:
+        return {"error": f"Unable to apply proposals: {exc}"}
+
+    return {
+        "message": f"Applied proposals {', '.join(proposal_id_list)}. New version {next_version_number} created.",
+        "agreement_id": agreement_id,
+        "new_version": next_version_number,
+        "applied": applied,
+        "appended": appended,
+    }
+
+
+@tool
+def create_agreements_from_estimate(estimate_id: str, counterparty: str = ""):
+    """
+    Generate an MSA and SOW from an approved estimate, linking the SOW back to the estimate.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return {"error": "Supabase credentials missing"}
+
+    if not estimate_id:
+        print("[Copilot][create_agreements_from_estimate] Missing estimate_id in tool call.")
+        return {
+            "error": "No estimate_id provided. Open an estimate detail page (URL /estimates/<id>) before requesting agreement generation, or pass the ID explicitly."
+        }
+
+    print(f"[Copilot][create_agreements_from_estimate] estimate_id={estimate_id}, counterparty={counterparty}")
+    estimate = fetch_estimate_summary(estimate_id)
+    if not estimate:
+        print(f"[Copilot] Supabase returned no estimate for {estimate_id}")
+        return {"error": f"Estimate {estimate_id} not found."}
+
+    wbs_rows = fetch_wbs_rows(estimate_id)
+    if not wbs_rows:
+        print(f"[Copilot] No WBS rows for estimate {estimate_id}")
+        return {
+            "error": "No WBS rows found for this estimate. Approve the Effort Estimate stage before drafting agreements.",
+        }
+
+    quote_summary = get_project_total(estimate_id)
+    if not quote_summary or quote_summary.get("total_cost", 0) == 0:
+        print(f"[Copilot] Quote summary missing for estimate {estimate_id}")
+        return {
+            "error": "Quote data missing. Fill out the Quote stage (rates, payment terms, delivery timeline) before drafting agreements.",
+        }
+
+    business_case = fetch_business_case_content(estimate_id)
+    requirements_highlights = extract_requirement_highlights(fetch_requirements_content(estimate_id))
+    counterparty_name = counterparty or estimate.get("owner") or f"{estimate.get('name')} Client"
+
+    msa_content = build_msa_content(
+        estimate,
+        business_case,
+        requirements_highlights,
+        quote_summary,
+        counterparty_name,
+    )
+    sow_content = build_sow_content(
+        estimate,
+        wbs_rows,
+        quote_summary,
+        counterparty_name,
+    )
+
+    try:
+        msa = create_contract_agreement(
+            agreement_type="MSA",
+            counterparty=counterparty_name,
+            content=msa_content,
+        )
+        sow = create_contract_agreement(
+            agreement_type="SOW",
+            counterparty=counterparty_name,
+            content=sow_content,
+            linked_estimate_id=estimate_id,
+        )
+    except Exception as exc:
+        return {"error": f"Unable to create agreements: {exc}"}
+
+    return {
+        "message": f"Created MSA ({msa['id']}) and SOW ({sow['id']}) for {counterparty_name}.",
+        "msa_id": msa["id"],
+        "sow_id": sow["id"],
+        "linked_estimate_id": estimate_id,
+    }
+
+
 backend_tools = [
     summarize_business_case,
     summarize_requirements,
@@ -577,6 +1150,8 @@ backend_tools = [
     load_exemplar_contracts,
     summarize_pushbacks,
     add_agreement_note,
+    apply_proposals,
+    create_agreements_from_estimate,
 ]
 
 # Extract tool names from backend_tools for comparison
@@ -625,6 +1200,8 @@ async def chat_node(state: AgentState, config: RunnableConfig) -> Command[Litera
         project_stage = state.get("selected_project_stage") or (entity_data.get("stage") if entity_data else "Unknown Stage")
         context_parts.append(f"You are assisting with the Estimates workflow.")
         context_parts.append(f"Current project: {project_name} (Stage: {project_stage})")
+        if entity_id:
+            context_parts.append(f"Use estimate_id={entity_id} for any tool parameters that require the current estimate.")
         context_parts.append("You can help with: generating business cases, requirements, WBS, calculating totals, adjusting hours, and adding line items.")
     elif workflow == "contracts":
         counterparty = entity_data.get("counterparty", "Unknown") if entity_data else "Unknown"
