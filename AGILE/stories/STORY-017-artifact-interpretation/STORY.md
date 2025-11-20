@@ -1,4 +1,4 @@
-# STORY-016 — Artifact Interpretation & Insight Extraction
+# STORY-017 — Artifact Interpretation & Insight Extraction
 
 ## Summary
 Give the LLMs real visibility into uploaded artifacts by extracting text/vision signals from every file (PNG, JPG, PDF, DOCX, Markdown, plain text) and piping the parsed content into Business Case / Requirements / Effort Estimate generators. Artifacts should no longer be referenced only by filename; Copilot should summarize actual content.
