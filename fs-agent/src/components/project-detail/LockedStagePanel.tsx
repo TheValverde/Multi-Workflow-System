@@ -13,7 +13,7 @@ export default function LockedStagePanel({ stageTitle, gateInfo }: Props) {
   return (
     <div className="rounded-3xl border-2 border-slate-200 bg-slate-50 p-8 text-center">
       <div className="mx-auto max-w-md">
-        <div className="mb-4 text-6xl">🔒</div>
+        <div className="mb-4 text-4xl font-bold text-slate-400">LOCKED</div>
         <h3 className="mb-2 text-xl font-semibold text-slate-900">
           {stageTitle} is Locked
         </h3>

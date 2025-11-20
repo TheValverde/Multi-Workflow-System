@@ -299,7 +299,7 @@ export default function PoliciesPage() {
   }, [summary]);
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-10 text-slate-900">
+    <div className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 lg:px-6 lg:py-8">
       <div className="mx-auto flex max-w-6xl flex-col gap-8">
         <header className="space-y-4 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

@@ -160,7 +160,7 @@ export default function EstimatesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-10 text-slate-900">
+    <div className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 lg:px-6 lg:py-8">
       <div className="mx-auto w-full max-w-6xl space-y-8">
         <header className="space-y-2">
           <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
