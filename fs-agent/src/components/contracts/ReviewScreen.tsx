@@ -283,7 +283,7 @@ function ProposalCard({
                 Before
               </p>
               <div className="text-sm text-slate-900">
-                {diffResult.map((part, i) => {
+                {diffResult.map((part: { added?: boolean; removed?: boolean; value: string }, i: number) => {
                   if (part.added) return null;
                   return (
                     <span
@@ -305,7 +305,7 @@ function ProposalCard({
                 After
               </p>
               <div className="text-sm text-slate-900">
-                {diffResult.map((part, i) => {
+                {diffResult.map((part: { added?: boolean; removed?: boolean; value: string }, i: number) => {
                   if (part.removed) return null;
                   return (
                     <span

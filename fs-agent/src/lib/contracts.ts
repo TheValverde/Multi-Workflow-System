@@ -183,7 +183,7 @@ export async function createAgreement(
     .from("contract_agreements")
     .insert({
       type: payload.type,
-      counterparty: payload.counterparty.trim(),
+      counterparty: payload.counterparty?.trim() || "",
       content: payload.content ?? "",
       linked_estimate_id: payload.linked_estimate_id ?? null,
     })

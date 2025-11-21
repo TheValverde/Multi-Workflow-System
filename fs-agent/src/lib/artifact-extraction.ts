@@ -121,7 +121,7 @@ function markdownToHtml(markdown: string): string {
   html = html.replace(/^(\d+)\. (.*$)/gim, "<li>$2</li>");
 
   // Wrap list items in <ul> or <ol>
-  html = html.replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>");
+  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, "<ul>$1</ul>");
 
   // Paragraphs (double newline)
   html = html.split("\n\n").map((p) => {

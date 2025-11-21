@@ -49,9 +49,10 @@ export function buildStageGateStatus(
   };
 
   // Business Case Stage
-  const businessCaseHasContent =
+  const businessCaseHasContent = Boolean(
     detail.businessCase?.content &&
-    extractPlainText(detail.businessCase.content).length > 0;
+    extractPlainText(detail.businessCase.content).length > 0
+  );
   const businessCaseApproved = detail.businessCase?.approved ?? false;
   const artifactsReady = artifactCount >= 2;
 
@@ -87,9 +88,10 @@ export function buildStageGateStatus(
   };
 
   // Requirements Stage
-  const requirementsHasContent =
+  const requirementsHasContent = Boolean(
     detail.requirements?.content &&
-    extractPlainText(detail.requirements.content).length > 0;
+    extractPlainText(detail.requirements.content).length > 0
+  );
   const requirementsValidated = detail.requirements?.validated ?? false;
 
   gates["Requirements"] = {
@@ -124,9 +126,10 @@ export function buildStageGateStatus(
   };
 
   // Solution/Architecture Stage
-  const solutionHasContent =
+  const solutionHasContent = Boolean(
     detail.solutionArchitecture?.content &&
-    extractPlainText(detail.solutionArchitecture.content).length > 0;
+    extractPlainText(detail.solutionArchitecture.content).length > 0
+  );
   const solutionApproved = detail.solutionArchitecture?.approved ?? false;
 
   gates["Solution/Architecture"] = {
@@ -198,10 +201,10 @@ export function buildStageGateStatus(
   // Quote Stage
   const hasRates = detail.quote?.rates?.length > 0;
   // Check both saved payment_terms and any local draft state
-  const savedPaymentTerms = detail.quote?.payment_terms?.trim() || "";
+  const savedPaymentTerms = (detail.quote?.record?.payment_terms as string | undefined)?.trim() || "";
   const localPaymentTermsValue = localPaymentTerms?.trim() || "";
   const hasPaymentTerms = savedPaymentTerms.length > 0 || localPaymentTermsValue.length > 0;
-  const quoteReady = hasRates && hasPaymentTerms;
+  const quoteReady = Boolean(hasRates && hasPaymentTerms);
 
   gates["Quote"] = {
     stage: "Quote",

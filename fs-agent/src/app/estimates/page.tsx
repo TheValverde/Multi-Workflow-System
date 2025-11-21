@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { useCoAgent } from "@copilotkit/react-core";
 import { useCopilotContext } from "@/hooks/useCopilotContext";
 import { Plus } from "lucide-react";
@@ -54,6 +55,14 @@ const isStage = (value: string | null): value is Stage => {
 };
 
 export default function EstimatesPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-slate-600">Loading estimates...</div>}>
+      <EstimatesPageContent />
+    </Suspense>
+  );
+}
+
+function EstimatesPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

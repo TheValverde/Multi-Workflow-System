@@ -70,7 +70,7 @@ export async function PATCH(
 
     // Validate that the target stage is accessible (not locked)
     const targetIndex = STAGE_ORDER.indexOf(body.stage);
-    const currentIndex = STAGE_ORDER.indexOf(detail.estimate.stage);
+    const currentIndex = STAGE_ORDER.indexOf(detail.estimate.stage as StageKey);
     
     if (targetIndex === -1) {
       return NextResponse.json(

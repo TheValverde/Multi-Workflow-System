@@ -30,7 +30,7 @@ function composeBusinessCase(detail: Awaited<ReturnType<typeof fetchEstimateDeta
     const cleaned = cleanArtifactContent(content);
     
     // Extract objectives (look for "Objective", "Goal", "Purpose" sections)
-    const objectiveMatch = cleaned.match(/(?:objective|goal|purpose)[:\-]?\s*(.+?)(?:\n\n|\n##|$)/is);
+    const objectiveMatch = cleaned.match(/(?:objective|goal|purpose)[:\-]?\s*([\s\S]+?)(?:\n\n|\n##|$)/i);
     if (objectiveMatch) {
       const objective = objectiveMatch[1].trim().split(/[.!?]/)[0];
       if (objective.length > 20 && objective.length < 200) {

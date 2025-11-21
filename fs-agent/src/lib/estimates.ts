@@ -504,7 +504,7 @@ export async function replaceWbsRows(
   }));
   const { error } = await supabase
     .from("estimate_wbs_rows")
-    .insert(payload, { returning: "minimal" });
+    .insert(payload);
   if (error) {
     throw error;
   }
@@ -673,7 +673,6 @@ export async function replaceQuoteRates(
       rate: rate.rate,
       updated_at: new Date().toISOString(),
     })),
-    { returning: "minimal" },
   );
   if (error) {
     throw error;
@@ -704,7 +703,6 @@ export async function replaceQuoteOverrides(
       rate: override.rate,
       updated_at: new Date().toISOString(),
     })),
-    { returning: "minimal" },
   );
   if (error) {
     throw error;

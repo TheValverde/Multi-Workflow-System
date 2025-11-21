@@ -96,18 +96,42 @@ Right-side AI assistant that:
    ```
 
 2. **Set up environment variables**
-   ```bash
-   # Copy example environment files
-   cp .env.example .env.local
-   cp agent/.env.example agent/.env
    
-   # Edit .env.local and agent/.env and add your API keys:
-   # OPENAI_API_KEY=your-key-here
-   # ANTHROPIC_API_KEY=your-key-here (optional)
-   # SUPABASE_URL=https://your-project.supabase.co
-   # SUPABASE_ANON_KEY=your-anon-key
-   # SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   You need to create environment files in two locations:
+   
+   **For Frontend (Next.js):**
+   ```bash
+   # Create .env.local in fs-agent/ root
+   cd fs-agent
+   cat > .env.local << 'EOF'
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_ANON_KEY=your-anon-key
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   NEXT_PUBLIC_CPK_PUBLIC_API_KEY=your-copilotkit-key (optional)
+   EOF
    ```
+   
+   **For Agent (Python/LangGraph):**
+   ```bash
+   # Create .env in fs-agent/agent/
+   cd agent
+   cat > .env << 'EOF'
+   OPENAI_API_KEY=your-openai-key
+   ANTHROPIC_API_KEY=your-anthropic-key (optional)
+   LANGSMITH_API_KEY=your-langsmith-key (optional)
+   LANGSMITH_PROJECT=fs-agent (optional)
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_ANON_KEY=your-anon-key
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   EOF
+   cd ..
+   ```
+   
+   **Required Variables:**
+   - `OPENAI_API_KEY` - Required for LLM functionality
+   - `SUPABASE_URL` - Your Supabase project URL
+   - `SUPABASE_ANON_KEY` - Supabase anonymous/public key
+   - `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key (for admin operations)
 
 3. **Install dependencies**
    ```bash
@@ -143,32 +167,107 @@ Right-side AI assistant that:
    - LangGraph Agent: http://localhost:8123
    - Dashboard: http://localhost:3000 (root route)
 
-## Docker Setup (Optional, Untested)
+## Docker Setup (Production-Ready)
 
-> **Note**: Docker setup is provided but has not been fully tested. Local development with `pnpm dev` is the recommended approach.
+For containerized deployment, Docker Compose runs both the frontend and agent services together.
 
-For a containerized development environment:
+### Prerequisites
+- Docker and Docker Compose installed
+- All required API keys (see environment variables below)
 
+### Quick Start
+
+1. **Create environment file for Docker**
+   
+   Create a `.env` file in the `fs-agent/` directory (same level as `docker-compose.yml`):
+   
+   ```bash
+   cd fs-agent
+   cat > .env << 'EOF'
+   OPENAI_API_KEY=your-openai-key
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_ANON_KEY=your-anon-key
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   NEXT_PUBLIC_CPK_PUBLIC_API_KEY=your-copilotkit-key (optional)
+   ANTHROPIC_API_KEY=your-anthropic-key (optional)
+   LANGSMITH_API_KEY=your-langsmith-key (optional)
+   LANGSMITH_PROJECT=fs-agent (optional)
+   NODE_ENV=production
+   EOF
+   ```
+
+2. **Build and start services**
+   
+   ```bash
+   # Build images and start all services
+   docker compose up --build -d
+   
+   # View logs
+   docker compose logs -f
+   
+   # View logs for specific service
+   docker compose logs -f frontend
+   docker compose logs -f agent
+   
+   # Check service status
+   docker compose ps
+   
+   # Stop services
+   docker compose down
+   ```
+
+3. **Access the application**
+   - **Frontend**: http://localhost:3000
+   - **Agent API**: http://localhost:8123
+   - **Agent Docs**: http://localhost:8123/docs
+
+### Docker Services
+
+- **`frontend`**: Next.js production build running on port 3000
+  - Uses standalone build for optimal size
+  - Connects to agent via Docker network (`http://agent:8123`)
+  - Includes DNS configuration for external API access
+
+- **`agent`**: LangGraph Python agent running on port 8123
+  - Uses `uv` for fast dependency management
+  - Health check ensures agent is ready before frontend starts
+  - Includes DNS configuration for external API access
+
+### Environment Variables for Docker
+
+The `.env` file at `fs-agent/.env` is automatically loaded by Docker Compose. Both services receive:
+- `OPENAI_API_KEY` - Required for agent LLM calls
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` - Required for database access
+- `ANTHROPIC_API_KEY`, `LANGSMITH_API_KEY` - Optional, for alternative LLM providers
+
+The frontend service also receives:
+- `LANGGRAPH_DEPLOYMENT_URL=http://agent:8123` (automatically set)
+- `NODE_ENV=production` (defaults to production in Docker)
+
+### Troubleshooting
+
+**DNS Resolution Issues:**
+If you encounter `getaddrinfo EAI_AGAIN` errors when connecting to Supabase or other external services, the Docker Compose configuration includes Google DNS servers (8.8.8.8, 8.8.4.4) to resolve this.
+
+**Agent Not Starting:**
+- Check agent logs: `docker compose logs agent`
+- Verify `OPENAI_API_KEY` is set in `.env`
+- Ensure port 8123 is not already in use
+
+**Frontend Can't Connect to Agent:**
+- Verify both services are running: `docker compose ps`
+- Check agent health: `curl http://localhost:8123/docs`
+- Review frontend logs: `docker compose logs frontend`
+
+**Rebuilding After Code Changes:**
 ```bash
-# Build and start all services
-cd fs-agent
-docker-compose up --build
+# Rebuild specific service
+docker compose build frontend
+docker compose build agent
 
-# Run in detached mode
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
+# Rebuild and restart
+docker compose up --build -d
 ```
-
-Services:
-- **Frontend**: http://localhost:3000
-- **Agent**: http://localhost:8123
-
-**Note**: You'll need to set environment variables in a `.env` file at the `fs-agent/` root for Docker to pick them up, or pass them via `docker-compose` environment section.
 
 ## Seeding Demo Data
 
@@ -179,7 +278,11 @@ The seed script creates:
 
 Run seeding:
 ```bash
+# For local development
 pnpm seed:policies
+
+# For Docker deployment
+docker compose exec frontend pnpm seed:policies
 ```
 
 ## Project Structure
@@ -208,7 +311,8 @@ Multi-Workflow-System/
 │   ├── migrations/           # Database migrations
 │   ├── docker-compose.yml    # Docker services
 │   ├── Dockerfile.frontend   # Frontend container
-│   ├── .env.local            # Frontend environment
+│   ├── .env                  # Docker environment variables
+│   ├── .env.local            # Frontend local development env
 │   └── README.md             # Detailed setup guide
 ├── AGILE/                    # Agile project management
 │   ├── sprints/              # Sprint definitions

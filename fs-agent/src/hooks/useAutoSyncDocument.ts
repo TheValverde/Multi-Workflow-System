@@ -56,7 +56,10 @@ async function savePendingToDB(
       content,
       timestamp: Date.now(),
     });
-    await tx.complete;
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
   } catch (error) {
     console.error("[autosave] Failed to save to IndexedDB:", error);
   }
@@ -68,7 +71,10 @@ async function removePendingFromDB(documentId: string): Promise<void> {
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
     await store.delete(documentId);
-    await tx.complete;
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
   } catch (error) {
     console.error("[autosave] Failed to remove from IndexedDB:", error);
   }
@@ -82,8 +88,14 @@ async function loadPendingFromDB(
     const tx = db.transaction(STORE_NAME, "readonly");
     const store = tx.objectStore(STORE_NAME);
     const result = await store.get(documentId);
-    await tx.complete;
-    return result?.content || null;
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    if (result && typeof result === 'object' && 'content' in result) {
+      return (result as { content: string }).content || null;
+    }
+    return null;
   } catch (error) {
     console.error("[autosave] Failed to load from IndexedDB:", error);
     return null;

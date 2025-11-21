@@ -336,7 +336,7 @@ export default function ProjectDetailView({ estimateId }: Props) {
     (requirementsDraft ?? "") !== (detail.requirements.content ?? "");
   const solutionArchitectureDirty =
     detail?.solutionArchitecture &&
-    (solutionArchitectureDraft ?? "") !== (detail.solutionArchitecture.content ?? "");
+    (solutionArchitectureDraft ?? "") !== (detail.solutionArchitecture.content ?? "") || false;
 
   const canApproveBusinessCase =
     extractPlainText(businessCaseDraft).length > 0 &&
@@ -1254,6 +1254,8 @@ export default function ProjectDetailView({ estimateId }: Props) {
                   artifacts={detail.artifacts}
                   onUpload={handleUpload}
                   uploading={uploading}
+                  estimateId={estimateId}
+                  onDetailUpdate={applyDetail}
                 />
               )}
 
@@ -1324,7 +1326,7 @@ export default function ProjectDetailView({ estimateId }: Props) {
                       draft={solutionArchitectureDraft}
                       approved={detail.solutionArchitecture.approved}
                       updatedAt={detail.solutionArchitecture.updated_at}
-                      dirty={solutionArchitectureDirty}
+                      dirty={solutionArchitectureDirty ?? false}
                       saving={solutionArchitectureSaving}
                       generating={solutionArchitectureGenerating}
                       canApprove={
@@ -2337,10 +2339,14 @@ function ArtifactsPanel({
   artifacts,
   onUpload,
   uploading,
+  estimateId,
+  onDetailUpdate,
 }: {
   artifacts: ArtifactRecord[];
   onUpload: (files: FileList | null) => void;
   uploading: boolean;
+  estimateId: string;
+  onDetailUpdate: (detail: EstimateDetail) => void;
 }) {
   return (
     <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
@@ -2418,7 +2424,7 @@ function ArtifactsPanel({
                           const detailRes = await fetch(`/api/estimates/${estimateId}`);
                           if (detailRes.ok) {
                             const detail = await detailRes.json();
-                            applyDetail(detail);
+                            onDetailUpdate(detail);
                           }
                         }
                       } catch (err) {
