@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase";
 import { ARTIFACT_BUCKET } from "@/lib/storage";
 import { fetchEstimateDetail } from "@/lib/estimates";
+import { extractTextFromFile } from "@/lib/artifact-extraction";
 
 const EXTENSION_MIME_MAP: Record<string, string> = {
   md: "text/markdown",
@@ -98,7 +99,7 @@ export async function POST(
   }
 
   // Trigger extraction for MD and DOCX files asynchronously
-  // Use a background task - don't block the response
+  // Process in background - don't block the response
   for (let i = 0; i < artifactIds.length; i++) {
     const artifactId = artifactIds[i];
     const file = files[i];
@@ -106,17 +107,94 @@ export async function POST(
 
     const ext = file.name.split(".").pop()?.toLowerCase();
     if (ext === "md" || ext === "docx") {
-      // Trigger extraction in background (don't await)
-      // Use the request URL to construct the base URL
-      const url = new URL(request.url);
-      const baseUrl = `${url.protocol}//${url.host}`;
-      fetch(`${baseUrl}/api/estimates/${estimateId}/artifacts/extract`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ artifactId }),
-      }).catch((err) => {
-        console.error(`[Artifact Upload] Failed to trigger extraction for ${file.name}:`, err);
-      });
+      // Process extraction in background (don't await)
+      (async () => {
+        try {
+          // Fetch artifact metadata
+          const { data: artifact } = await supabase
+            .from("estimate_artifacts")
+            .select("id,filename,storage_path")
+            .eq("id", artifactId)
+            .eq("estimate_id", estimateId)
+            .single();
+
+          if (!artifact) {
+            console.error(`[Artifact Upload] Artifact ${artifactId} not found for extraction`);
+            return;
+          }
+
+          // Check if extraction already exists and is ready
+          const { data: existingExtract } = await supabase
+            .from("artifact_extracts")
+            .select("id,extraction_status")
+            .eq("artifact_id", artifactId)
+            .eq("extraction_status", "ready")
+            .maybeSingle();
+
+          if (existingExtract) {
+            return; // Already extracted
+          }
+
+          // Update status to processing
+          await supabase.from("artifact_extracts").upsert({
+            artifact_id: artifactId,
+            extraction_status: "processing",
+            error_message: null,
+          });
+
+          // Download file from storage
+          const { data: fileData, error: downloadError } = await supabase.storage
+            .from(ARTIFACT_BUCKET)
+            .download(artifact.storage_path);
+
+          if (downloadError || !fileData) {
+            await supabase.from("artifact_extracts").upsert({
+              artifact_id: artifactId,
+              extraction_status: "failed",
+              error_message: downloadError?.message || "Failed to download file",
+            });
+            return;
+          }
+
+          // Convert blob to buffer
+          const arrayBuffer = await fileData.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+
+          // Extract text based on file type
+          const result = await extractTextFromFile(
+            buffer,
+            artifact.filename,
+          );
+
+          if (result.error) {
+            await supabase.from("artifact_extracts").upsert({
+              artifact_id: artifactId,
+              extraction_status: "failed",
+              error_message: result.error,
+            });
+            return;
+          }
+
+          // Save extraction result
+          await supabase.from("artifact_extracts").upsert({
+            artifact_id: artifactId,
+            content_text: result.contentText,
+            content_html: result.contentHtml,
+            summary: result.summary,
+            extraction_status: "ready",
+            extracted_at: new Date().toISOString(),
+            error_message: null,
+          });
+        } catch (err) {
+          console.error(`[Artifact Upload] Failed to extract ${file.name}:`, err);
+          // Mark as failed
+          await supabase.from("artifact_extracts").upsert({
+            artifact_id: artifactId,
+            extraction_status: "failed",
+            error_message: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      })();
     }
   }
 

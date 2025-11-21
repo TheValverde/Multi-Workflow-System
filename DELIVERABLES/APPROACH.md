@@ -17,12 +17,16 @@
 
 ## Prompt Strategy
 
-- Used a combination of prompts to get the job done.
+- Created a PRD and AGILE structure to help guide the development process.
+- PRD was based on the RULES.md, and the AGILE structure was based on the PRD.
+- The AGILE folder contained epics, stories, and sprints to help guide the development process.
+- The stories served as the base prompts for each step of development.
 
 ---
 
 ## Biggest pivot/surprise during implementation
 
+I was surprised by how quickly the project came together. I was able to get the project up and running in a few days, and the project is now in a working state.
 ---
 
 ## What you'd do differently with more time
